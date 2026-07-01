@@ -1,0 +1,363 @@
+#!/usr/bin/env node
+
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
+const API_VERSION = "2026-07";
+const REQUIRED_SCOPES = ["read_products", "read_inventory", "read_locations"];
+const BILLING_PLAN_NAMES = [
+  "Stocky Escape Kit Basic",
+  "Stocky Escape Kit Pro",
+  "Stocky Escape Kit Plus",
+];
+const BILLING_WEBHOOK_TOPIC = "app_purchases_one_time/update";
+
+const mode = process.argv.includes("--static") ? "static" : "live";
+
+loadDotEnv();
+
+const staticFailures = runStaticChecks();
+
+if (mode === "static") {
+  finish(staticFailures, {
+    success: "Static Shopify smoke prerequisites passed.",
+    failure: "Static Shopify smoke prerequisites failed.",
+  });
+}
+
+if (staticFailures.length > 0) {
+  finish(staticFailures, {
+    failure:
+      "Live Shopify smoke test cannot run until static prerequisites pass.",
+  });
+}
+
+const liveFailures = await runLiveChecks();
+
+finish(liveFailures, {
+  success: "Live Shopify smoke test passed.",
+  failure: "Live Shopify smoke test failed.",
+});
+
+function runStaticChecks() {
+  const failures = [];
+  const envExamplePath = path.join(process.cwd(), ".env.example");
+  const shopifyConfigPath = path.join(process.cwd(), "shopify.app.toml");
+  const packageJsonPath = path.join(process.cwd(), "package.json");
+
+  if (!existsSync(envExamplePath)) {
+    failures.push(".env.example is missing.");
+  } else {
+    const envExample = readFileSync(envExamplePath, "utf8");
+    for (const key of [
+      "DATABASE_URL",
+      "SHOPIFY_API_KEY",
+      "SHOPIFY_API_SECRET",
+      "SHOPIFY_APP_URL",
+      "SHOPIFY_BILLING_TEST",
+      "SHOPIFY_SYNC_VARIANT_LIMIT",
+      "SHOPIFY_TEST_SHOP",
+    ]) {
+      if (!envExample.includes(`${key}=`)) {
+        failures.push(`.env.example is missing ${key}.`);
+      }
+    }
+  }
+
+  if (!existsSync(shopifyConfigPath)) {
+    failures.push("shopify.app.toml is missing.");
+  } else {
+    const shopifyConfig = readFileSync(shopifyConfigPath, "utf8");
+    for (const scope of REQUIRED_SCOPES) {
+      if (!shopifyConfig.includes(scope)) {
+        failures.push(`shopify.app.toml is missing ${scope}.`);
+      }
+    }
+
+    if (!shopifyConfig.includes(BILLING_WEBHOOK_TOPIC)) {
+      failures.push(
+        `shopify.app.toml is missing ${BILLING_WEBHOOK_TOPIC} webhook registration.`,
+      );
+    }
+  }
+
+  if (!existsSync(packageJsonPath)) {
+    failures.push("package.json is missing.");
+  } else {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    if (
+      packageJson.scripts?.["smoke:shopify"] !==
+      "node scripts/smoke-shopify-live.mjs"
+    ) {
+      failures.push("package.json is missing the smoke:shopify script.");
+    }
+    if (
+      packageJson.scripts?.["smoke:shopify:static"] !==
+      "node scripts/smoke-shopify-live.mjs --static"
+    ) {
+      failures.push("package.json is missing the smoke:shopify:static script.");
+    }
+  }
+
+  return failures;
+}
+
+async function runLiveChecks() {
+  const failures = [];
+  const shop = normalizeShop(process.env.SHOPIFY_TEST_SHOP);
+
+  for (const key of ["DATABASE_URL", "SHOPIFY_TEST_SHOP"]) {
+    if (!process.env[key]) {
+      failures.push(`${key} is required for the live smoke test.`);
+    }
+  }
+
+  if (process.env.SHOPIFY_TEST_SHOP && !shop) {
+    failures.push("SHOPIFY_TEST_SHOP must be a myshopify.com shop domain.");
+  }
+
+  if (failures.length > 0) {
+    return failures;
+  }
+
+  const { PrismaClient } = await import("@prisma/client");
+  const prisma = new PrismaClient();
+
+  try {
+    const session = await prisma.session.findFirst({
+      where: {
+        shop,
+        isOnline: false,
+      },
+      orderBy: {
+        id: "asc",
+      },
+    });
+
+    if (!session?.accessToken) {
+      return [
+        `No offline Shopify session found for ${shop}. Run npm run dev, install the app on that dev store, then rerun npm run smoke:shopify.`,
+      ];
+    }
+
+    let payload;
+
+    try {
+      payload = await adminGraphql({
+        shop,
+        accessToken: session.accessToken,
+      });
+    } catch (error) {
+      return [
+        error instanceof Error
+          ? error.message
+          : "Unknown Shopify GraphQL smoke-test failure.",
+      ];
+    }
+
+    const installation = payload.data?.currentAppInstallation;
+    const grantedScopes =
+      installation?.accessScopes.map((scope) => scope.handle) ?? [];
+    const missingScopes = REQUIRED_SCOPES.filter(
+      (scope) => !grantedScopes.includes(scope),
+    );
+
+    if (missingScopes.length > 0) {
+      failures.push(
+        `Installed app is missing scopes: ${missingScopes.join(", ")}.`,
+      );
+    }
+
+    const activeOneTimePurchase = installation?.oneTimePurchases.edges
+      .map((edge) => edge.node)
+      .find(
+        (purchase) =>
+          purchase.status === "ACTIVE" &&
+          BILLING_PLAN_NAMES.includes(purchase.name),
+      );
+    const activeSubscription = installation?.activeSubscriptions.find(
+      (subscription) =>
+        subscription.status === "ACTIVE" &&
+        BILLING_PLAN_NAMES.includes(subscription.name),
+    );
+
+    if (!activeOneTimePurchase && !activeSubscription) {
+      failures.push(
+        `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
+      );
+    }
+
+    if (!payload.data?.products) {
+      failures.push("GraphQL products query returned no connection.");
+    }
+
+    if (!payload.data?.locations) {
+      failures.push("GraphQL locations query returned no connection.");
+    }
+
+    if (failures.length === 0) {
+      printLiveSummary({
+        shop,
+        grantedScopes,
+        billingName:
+          activeOneTimePurchase?.name ?? activeSubscription?.name ?? "",
+        productSamples: payload.data.products.edges.length,
+        locationSamples: payload.data.locations.edges.length,
+      });
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+
+  return failures;
+}
+
+async function adminGraphql({ shop, accessToken }) {
+  const response = await fetch(
+    `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+      body: JSON.stringify({
+        query: `#graphql
+          query StockyEscapeKitLiveSmoke {
+            currentAppInstallation {
+              accessScopes {
+                handle
+              }
+              activeSubscriptions {
+                name
+                status
+                test
+              }
+              oneTimePurchases(first: 20) {
+                edges {
+                  node {
+                    name
+                    status
+                    test
+                  }
+                }
+              }
+            }
+            products(first: 1) {
+              edges {
+                node {
+                  id
+                  title
+                }
+              }
+            }
+            locations(first: 1) {
+              edges {
+                node {
+                  id
+                  name
+                }
+              }
+            }
+          }
+        `,
+      }),
+    },
+  );
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `Shopify GraphQL returned HTTP ${response.status}: ${JSON.stringify(payload)}`,
+    );
+  }
+
+  if (payload.errors?.length) {
+    throw new Error(
+      `Shopify GraphQL errors: ${payload.errors
+        .map((error) => error.message)
+        .join("; ")}`,
+    );
+  }
+
+  return payload;
+}
+
+function loadDotEnv() {
+  const dotenvPath = path.join(process.cwd(), ".env");
+
+  if (!existsSync(dotenvPath)) {
+    return;
+  }
+
+  for (const line of readFileSync(dotenvPath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+
+    if (!match || process.env[match[1]] !== undefined) {
+      continue;
+    }
+
+    process.env[match[1]] = stripQuotes(match[2]);
+  }
+}
+
+function stripQuotes(value) {
+  const trimmed = value.trim();
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function normalizeShop(value) {
+  if (!value) {
+    return null;
+  }
+
+  const shop = value.trim().toLowerCase();
+
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+    return null;
+  }
+
+  return shop;
+}
+
+function printLiveSummary({
+  shop,
+  grantedScopes,
+  billingName,
+  productSamples,
+  locationSamples,
+}) {
+  console.log(`Shop: ${shop}`);
+  console.log(`Billing: ${billingName}`);
+  console.log(`Granted scopes: ${grantedScopes.sort().join(", ")}`);
+  console.log(`Products query sample rows: ${productSamples}`);
+  console.log(`Locations query sample rows: ${locationSamples}`);
+}
+
+function finish(failures, { success, failure }) {
+  if (failures.length === 0) {
+    console.log(success);
+    process.exit(0);
+  }
+
+  console.error(failure);
+  for (const item of failures) {
+    console.error(`- ${item}`);
+  }
+  process.exit(mode === "static" ? 1 : 2);
+}

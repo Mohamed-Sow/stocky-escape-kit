@@ -46,6 +46,8 @@ Build a Shopify-only public app that helps merchants preserve Stocky exports and
 - Upload, parser, audit, catalog sync, and exports are implemented in server modules under `app/lib`.
 - GraphQL catalog sync is cursor-paginated and capped by `SHOPIFY_SYNC_VARIANT_LIMIT` to keep embedded actions bounded.
 - The app remains read-only against Shopify and does not claim historical Stocky purchase orders can be imported into Shopify.
+- React Router v8 future flags are enabled in `react-router.config.ts` to remove build-time future-warning drift.
+- Live Shopify verification is covered by `npm run smoke:shopify`, with `npm run smoke:shopify:static` available for credential-free prerequisite checks.
 
 ## Assumptions
 
