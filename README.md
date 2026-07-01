@@ -42,8 +42,8 @@ npm run risk:audit
 ```
 
 `risk:audit` verifies static Shopify prerequisites, local parser/export
-regression tests, TypeScript, lint, and the production build output. It fails if
-React Router future-flag warnings return.
+regression tests, Prisma schema validity, TypeScript, lint, and the production
+build output. It fails if React Router future-flag warnings return.
 
 Run live verification after installing the app on a development store:
 

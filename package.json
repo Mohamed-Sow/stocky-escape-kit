@@ -13,7 +13,7 @@
     "docker-start": "npm run setup && npm run start",
     "setup": "prisma generate && prisma migrate deploy",
     "prisma:validate": "prisma validate",
-    "risk:audit": "npm run smoke:shopify:static && npm run test:local && npm run typecheck && npm run lint && node scripts/check-build-output.mjs",
+    "risk:audit": "npm run smoke:shopify:static && npm run test:local && node scripts/check-prisma-schema.mjs && npm run typecheck && npm run lint && node scripts/check-build-output.mjs",
     "test:local": "vite-node scripts/risk-regression-tests.ts",
     "smoke:shopify": "node scripts/smoke-shopify-live.mjs",
     "smoke:shopify:static": "node scripts/smoke-shopify-live.mjs --static",

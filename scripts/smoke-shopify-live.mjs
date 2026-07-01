@@ -48,6 +48,10 @@ function runStaticChecks() {
     process.cwd(),
     "scripts/check-build-output.mjs",
   );
+  const prismaSchemaCheckPath = path.join(
+    process.cwd(),
+    "scripts/check-prisma-schema.mjs",
+  );
 
   if (!existsSync(envExamplePath)) {
     failures.push(".env.example is missing.");
@@ -91,7 +95,7 @@ function runStaticChecks() {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
     if (
       packageJson.scripts?.["risk:audit"] !==
-      "npm run smoke:shopify:static && npm run test:local && npm run typecheck && npm run lint && node scripts/check-build-output.mjs"
+      "npm run smoke:shopify:static && npm run test:local && node scripts/check-prisma-schema.mjs && npm run typecheck && npm run lint && node scripts/check-build-output.mjs"
     ) {
       failures.push("package.json is missing the risk:audit script.");
     }
@@ -117,6 +121,10 @@ function runStaticChecks() {
 
   if (!existsSync(buildOutputCheckPath)) {
     failures.push("scripts/check-build-output.mjs is missing.");
+  }
+
+  if (!existsSync(prismaSchemaCheckPath)) {
+    failures.push("scripts/check-prisma-schema.mjs is missing.");
   }
 
   return failures;
