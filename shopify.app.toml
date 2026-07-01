@@ -18,6 +18,11 @@ api_version = "2026-07"
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  # Handled by: /app/routes/webhooks.app_purchases_one_time.update.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "app_purchases_one_time/update" ]
+  uri = "/webhooks/app_purchases_one_time/update"
+
   # Mandatory compliance topic for public apps only
   # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
   [[webhooks.subscriptions]]

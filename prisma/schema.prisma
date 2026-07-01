@@ -208,6 +208,7 @@ enum FindingSeverity {
 
 enum FindingCategory {
   MISSING_SKU
+  UNMATCHED_SHOPIFY_SKU
   DUPLICATE_SKU
   MISSING_COST
   MISSING_BARCODE

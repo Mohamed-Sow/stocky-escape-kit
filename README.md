@@ -18,6 +18,20 @@ This app should not become full inventory management software in v1.
 - App reports missing SKUs, duplicate SKUs, missing cost, missing barcode, missing vendor, unmatched locations, parse errors, and supplier reconstruction candidates.
 - Merchant exports clean archive and migration reports.
 
+## Implemented App Flow
+
+- OAuth install/linking uses the official Shopify React Router app package and Prisma session storage.
+- Billing uses one-time Shopify Billing API purchases for Basic, Pro, and Plus plans.
+- CSV uploads accept Stocky export files, detect report type, persist parsed rows, preserve unknown columns in row payloads, and record row-level warnings.
+- Catalog sync uses the Shopify GraphQL Admin API with `read_products`, `read_inventory`, and `read_locations`.
+- Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog.
+- Export downloads generate archive, SKU gap, supplier reconstruction, and migration checklist CSVs.
+
+## Environment
+
+`SHOPIFY_BILLING_TEST` defaults to test mode outside production unless set to `false`.
+`SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per sync request.
+
 ## Suggested Pricing
 
 - Basic: `$99` migration archive and audit.
@@ -27,4 +41,3 @@ This app should not become full inventory management software in v1.
 ## Implementation Entry Point
 
 Read `IMPLEMENTATION_PLAN.md` before scaffolding the Shopify app.
-

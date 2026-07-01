@@ -39,6 +39,14 @@ Build a Shopify-only public app that helps merchants preserve Stocky exports and
 - Integration tests for OAuth, billing gate, Shopify GraphQL sync mocks, upload lifecycle, and export job lifecycle.
 - Manual App Store review path on a development store with sample CSVs and sample-data mode.
 
+## Current Implementation Notes
+
+- Live install/linking is handled by Shopify OAuth plus an `afterAuth` store upsert.
+- Billing is configured as one-time Basic, Pro, and Plus Shopify Billing API purchases.
+- Upload, parser, audit, catalog sync, and exports are implemented in server modules under `app/lib`.
+- GraphQL catalog sync is cursor-paginated and capped by `SHOPIFY_SYNC_VARIANT_LIMIT` to keep embedded actions bounded.
+- The app remains read-only against Shopify and does not claim historical Stocky purchase orders can be imported into Shopify.
+
 ## Assumptions
 
 - V1 is read-only against Shopify.
@@ -46,4 +54,3 @@ Build a Shopify-only public app that helps merchants preserve Stocky exports and
 - No direct historical purchase order import claims.
 - No AI required for v1.
 - Object storage is used for uploaded CSVs and generated exports; database stores normalized rows and metadata.
-
