@@ -32,6 +32,8 @@ This app should not become full inventory management software in v1.
 `SHOPIFY_BILLING_TEST` defaults to test mode outside production unless set to `false`.
 `SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per sync request.
 `SHOPIFY_TEST_SHOP` is used only by the live Shopify smoke test.
+`SHOPIFY_ADMIN_ACCESS_TOKEN` is optional and lets the live smoke test call
+Shopify directly when no local Prisma session is available.
 
 ## Verification
 
@@ -54,13 +56,14 @@ npm run smoke:shopify
 ```
 
 The live smoke test loads `.env`, finds the offline session for `SHOPIFY_TEST_SHOP`
-in Prisma, calls the Shopify GraphQL Admin API, and verifies granted scopes,
-active Stocky Escape Kit billing, product query access, and location query
-access. It does not print access tokens.
+in Prisma or uses `SHOPIFY_ADMIN_ACCESS_TOKEN`, calls the Shopify GraphQL Admin
+API, and verifies granted scopes, active Stocky Escape Kit billing, product
+query access, and location query access. It does not print access tokens.
 
 If live smoke fails before contacting Shopify, set `DATABASE_URL` and
-`SHOPIFY_TEST_SHOP` in `.env`, run the app install on that shop, approve a test
-billing plan, and rerun `npm run smoke:shopify`.
+`SHOPIFY_TEST_SHOP` in `.env` after installing the app, or set
+`SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct GraphQL proof.
+Approve a test billing plan before rerunning `npm run smoke:shopify`.
 
 ## Suggested Pricing
 

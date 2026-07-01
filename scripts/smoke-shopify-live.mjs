@@ -65,6 +65,7 @@ function runStaticChecks() {
       "SHOPIFY_BILLING_TEST",
       "SHOPIFY_SYNC_VARIANT_LIMIT",
       "SHOPIFY_TEST_SHOP",
+      "SHOPIFY_ADMIN_ACCESS_TOKEN",
     ]) {
       if (!envExample.includes(`${key}=`)) {
         failures.push(`.env.example is missing ${key}.`);
@@ -133,21 +134,34 @@ function runStaticChecks() {
 async function runLiveChecks() {
   const failures = [];
   const shop = normalizeShop(process.env.SHOPIFY_TEST_SHOP);
+  const directAccessToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim();
 
-  for (const key of ["DATABASE_URL", "SHOPIFY_TEST_SHOP"]) {
-    if (!process.env[key]) {
-      failures.push(
-        `${key} is required for the live smoke test. Add it to .env or export it before running npm run smoke:shopify.`,
-      );
-    }
+  if (!process.env.SHOPIFY_TEST_SHOP) {
+    failures.push(
+      "SHOPIFY_TEST_SHOP is required for the live smoke test. Add it to .env or export it before running npm run smoke:shopify.",
+    );
   }
 
   if (process.env.SHOPIFY_TEST_SHOP && !shop) {
     failures.push("SHOPIFY_TEST_SHOP must be a myshopify.com shop domain.");
   }
 
+  if (!directAccessToken && !process.env.DATABASE_URL) {
+    failures.push(
+      "Set either SHOPIFY_ADMIN_ACCESS_TOKEN for direct GraphQL smoke proof, or DATABASE_URL so the script can load the installed app's offline Prisma session.",
+    );
+  }
+
   if (failures.length > 0) {
     return failures;
+  }
+
+  if (directAccessToken) {
+    return verifyAdminGraphql({
+      shop,
+      accessToken: directAccessToken,
+      tokenSource: "SHOPIFY_ADMIN_ACCESS_TOKEN",
+    });
   }
 
   const { PrismaClient } = await import("@prisma/client");
@@ -170,73 +184,83 @@ async function runLiveChecks() {
       ];
     }
 
-    let payload;
-
-    try {
-      payload = await adminGraphql({
-        shop,
-        accessToken: session.accessToken,
-      });
-    } catch (error) {
-      return [
-        error instanceof Error
-          ? error.message
-          : "Unknown Shopify GraphQL smoke-test failure.",
-      ];
-    }
-
-    const installation = payload.data?.currentAppInstallation;
-    const grantedScopes =
-      installation?.accessScopes.map((scope) => scope.handle) ?? [];
-    const missingScopes = REQUIRED_SCOPES.filter(
-      (scope) => !grantedScopes.includes(scope),
-    );
-
-    if (missingScopes.length > 0) {
-      failures.push(
-        `Installed app is missing scopes: ${missingScopes.join(", ")}.`,
-      );
-    }
-
-    const activeOneTimePurchase = installation?.oneTimePurchases.edges
-      .map((edge) => edge.node)
-      .find(
-        (purchase) =>
-          purchase.status === "ACTIVE" &&
-          BILLING_PLAN_NAMES.includes(purchase.name),
-      );
-    const activeSubscription = installation?.activeSubscriptions.find(
-      (subscription) =>
-        subscription.status === "ACTIVE" &&
-        BILLING_PLAN_NAMES.includes(subscription.name),
-    );
-
-    if (!activeOneTimePurchase && !activeSubscription) {
-      failures.push(
-        `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
-      );
-    }
-
-    if (!payload.data?.products) {
-      failures.push("GraphQL products query returned no connection.");
-    }
-
-    if (!payload.data?.locations) {
-      failures.push("GraphQL locations query returned no connection.");
-    }
-
-    if (failures.length === 0) {
-      printLiveSummary({
-        shop,
-        grantedScopes,
-        billingName:
-          activeOneTimePurchase?.name ?? activeSubscription?.name ?? "",
-        productSamples: payload.data.products.edges.length,
-        locationSamples: payload.data.locations.edges.length,
-      });
-    }
+    return verifyAdminGraphql({
+      shop,
+      accessToken: session.accessToken,
+      tokenSource: "Prisma offline session",
+    });
   } finally {
     await prisma.$disconnect();
+  }
+}
+
+async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
+  const failures = [];
+  let payload;
+
+  try {
+    payload = await adminGraphql({
+      shop,
+      accessToken,
+    });
+  } catch (error) {
+    return [
+      error instanceof Error
+        ? error.message
+        : "Unknown Shopify GraphQL smoke-test failure.",
+    ];
+  }
+
+  const installation = payload.data?.currentAppInstallation;
+  const grantedScopes =
+    installation?.accessScopes.map((scope) => scope.handle) ?? [];
+  const missingScopes = REQUIRED_SCOPES.filter(
+    (scope) => !grantedScopes.includes(scope),
+  );
+
+  if (missingScopes.length > 0) {
+    failures.push(
+      `Installed app is missing scopes: ${missingScopes.join(", ")}.`,
+    );
+  }
+
+  const activeOneTimePurchase = installation?.oneTimePurchases.edges
+    .map((edge) => edge.node)
+    .find(
+      (purchase) =>
+        purchase.status === "ACTIVE" &&
+        BILLING_PLAN_NAMES.includes(purchase.name),
+    );
+  const activeSubscription = installation?.activeSubscriptions.find(
+    (subscription) =>
+      subscription.status === "ACTIVE" &&
+      BILLING_PLAN_NAMES.includes(subscription.name),
+  );
+
+  if (!activeOneTimePurchase && !activeSubscription) {
+    failures.push(
+      `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
+    );
+  }
+
+  if (!payload.data?.products) {
+    failures.push("GraphQL products query returned no connection.");
+  }
+
+  if (!payload.data?.locations) {
+    failures.push("GraphQL locations query returned no connection.");
+  }
+
+  if (failures.length === 0) {
+    printLiveSummary({
+      shop,
+      tokenSource,
+      grantedScopes,
+      billingName:
+        activeOneTimePurchase?.name ?? activeSubscription?.name ?? "",
+      productSamples: payload.data.products.edges.length,
+      locationSamples: payload.data.locations.edges.length,
+    });
   }
 
   return failures;
@@ -367,12 +391,14 @@ function normalizeShop(value) {
 
 function printLiveSummary({
   shop,
+  tokenSource,
   grantedScopes,
   billingName,
   productSamples,
   locationSamples,
 }) {
   console.log(`Shop: ${shop}`);
+  console.log(`Token source: ${tokenSource}`);
   console.log(`Billing: ${billingName}`);
   console.log(`Granted scopes: ${grantedScopes.sort().join(", ")}`);
   console.log(`Products query sample rows: ${productSamples}`);
