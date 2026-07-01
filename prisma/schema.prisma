@@ -1,0 +1,233 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model Store {
+  id            String        @id @default(cuid())
+  shop          String        @unique
+  installed     Boolean       @default(true)
+  scopes        String?
+  billingStatus BillingStatus @default(NOT_STARTED)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  uninstalledAt DateTime?
+
+  uploadBatches    UploadBatch[]
+  catalogSnapshots ShopifyCatalogSnapshot[]
+  auditFindings    AuditFinding[]
+  exportJobs       ExportJob[]
+
+  @@index([installed])
+}
+
+model UploadBatch {
+  id               String            @id @default(cuid())
+  storeId          String
+  status           UploadBatchStatus @default(PENDING)
+  fileCount        Int               @default(0)
+  importedRowCount Int               @default(0)
+  warningCount     Int               @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  uploadedFiles UploadedFile[]
+  auditFindings AuditFinding[]
+
+  @@index([storeId, status])
+}
+
+model UploadedFile {
+  id                 String           @id @default(cuid())
+  batchId            String
+  originalFilename   String
+  detectedReportType StockyReportType @default(UNKNOWN)
+  parseStatus        FileParseStatus  @default(PENDING)
+  storagePointer     String
+  contentSha256      String?
+  rowCount           Int              @default(0)
+  warningCount       Int              @default(0)
+  errorMessage       String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  batch         UploadBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  parsedRecords ParsedRecord[]
+
+  @@index([batchId, detectedReportType])
+}
+
+model ParsedRecord {
+  id                String           @id @default(cuid())
+  uploadedFileId    String
+  normalizedType    StockyReportType
+  sourceRowNumber   Int
+  sku               String?
+  normalizedPayload Json
+  warnings          Json?
+  createdAt         DateTime         @default(now())
+
+  uploadedFile UploadedFile @relation(fields: [uploadedFileId], references: [id], onDelete: Cascade)
+
+  @@index([uploadedFileId, sourceRowNumber])
+  @@index([sku])
+}
+
+model ShopifyCatalogSnapshot {
+  id                  String     @id @default(cuid())
+  storeId             String
+  syncStatus          SyncStatus @default(PENDING)
+  productCount        Int        @default(0)
+  variantCount        Int        @default(0)
+  inventoryItemCount  Int        @default(0)
+  inventoryLevelCount Int        @default(0)
+  locationCount       Int        @default(0)
+  summary             Json?
+  errorMessage        String?
+  syncedAt            DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, syncStatus])
+}
+
+model AuditFinding {
+  id                String          @id @default(cuid())
+  storeId           String
+  batchId           String?
+  severity          FindingSeverity
+  category          FindingCategory
+  sku               String?
+  title             String
+  message           String
+  recommendedAction String
+  source            Json?
+  resolvedAt        DateTime?
+  createdAt         DateTime        @default(now())
+
+  store Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  batch UploadBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, severity])
+  @@index([batchId, category])
+  @@index([sku])
+}
+
+model ExportJob {
+  id                   String       @id @default(cuid())
+  storeId              String
+  exportType           ExportType
+  status               ExportStatus @default(PENDING)
+  generatedFilePointer String?
+  errorMessage         String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  completedAt          DateTime?
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, exportType])
+  @@index([status])
+}
+
+enum BillingStatus {
+  NOT_STARTED
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum UploadBatchStatus {
+  PENDING
+  IMPORTING
+  IMPORTED
+  FAILED
+}
+
+enum FileParseStatus {
+  PENDING
+  PARSED
+  FAILED
+}
+
+enum StockyReportType {
+  PURCHASE_ORDERS
+  STOCKTAKES
+  HISTORICAL_COSTS
+  INVENTORY_ACTIVITY
+  PRODUCTS
+  VENDORS
+  UNKNOWN
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum FindingSeverity {
+  CRITICAL
+  WARNING
+  INFO
+}
+
+enum FindingCategory {
+  MISSING_SKU
+  DUPLICATE_SKU
+  MISSING_COST
+  MISSING_BARCODE
+  MISSING_VENDOR
+  LOCATION_MISMATCH
+  OPEN_PURCHASE_ORDER_INDICATOR
+  SUPPLIER_RECONSTRUCTION_CANDIDATE
+  PARSE_ERROR
+}
+
+enum ExportType {
+  ARCHIVE_CSV
+  SKU_GAP_REPORT
+  SUPPLIER_RECONSTRUCTION_REPORT
+  MIGRATION_CHECKLIST
+}
+
+enum ExportStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}

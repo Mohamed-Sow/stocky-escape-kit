@@ -8,9 +8,15 @@ node_modules/
 
 # Build output
 build/
+app/build/
 dist/
 .cache/
+public/build/
+public/_dev/
+app/public/build/
 .shopify/
+.shopify.lock
+.react-router/
 
 # Logs
 *.log
@@ -24,3 +30,11 @@ pnpm-debug.log*
 .idea/
 .vscode/
 
+# Local app data
+prisma/dev.sqlite
+prisma/dev.sqlite-journal
+database.sqlite
+storage/uploads/
+
+# Extension builds
+extensions/*/dist

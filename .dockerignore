@@ -1,0 +1,8 @@
+.cache
+.env
+.env.*
+.git
+.react-router
+build
+node_modules
+public/build
