@@ -38,8 +38,11 @@ This app should not become full inventory management software in v1.
 Run local static checks without Shopify credentials:
 
 ```sh
-npm run smoke:shopify:static
+npm run risk:audit
 ```
+
+`risk:audit` verifies static Shopify prerequisites, TypeScript, lint, and the
+production build output. It fails if React Router future-flag warnings return.
 
 Run live verification after installing the app on a development store:
 
@@ -53,6 +56,10 @@ The live smoke test loads `.env`, finds the offline session for `SHOPIFY_TEST_SH
 in Prisma, calls the Shopify GraphQL Admin API, and verifies granted scopes,
 active Stocky Escape Kit billing, product query access, and location query
 access. It does not print access tokens.
+
+If live smoke fails before contacting Shopify, set `DATABASE_URL` and
+`SHOPIFY_TEST_SHOP` in `.env`, run the app install on that shop, approve a test
+billing plan, and rerun `npm run smoke:shopify`.
 
 ## Suggested Pricing
 

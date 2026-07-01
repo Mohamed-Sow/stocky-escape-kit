@@ -44,6 +44,10 @@ function runStaticChecks() {
   const envExamplePath = path.join(process.cwd(), ".env.example");
   const shopifyConfigPath = path.join(process.cwd(), "shopify.app.toml");
   const packageJsonPath = path.join(process.cwd(), "package.json");
+  const buildOutputCheckPath = path.join(
+    process.cwd(),
+    "scripts/check-build-output.mjs",
+  );
 
   if (!existsSync(envExamplePath)) {
     failures.push(".env.example is missing.");
@@ -86,6 +90,12 @@ function runStaticChecks() {
   } else {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
     if (
+      packageJson.scripts?.["risk:audit"] !==
+      "npm run smoke:shopify:static && npm run typecheck && npm run lint && node scripts/check-build-output.mjs"
+    ) {
+      failures.push("package.json is missing the risk:audit script.");
+    }
+    if (
       packageJson.scripts?.["smoke:shopify"] !==
       "node scripts/smoke-shopify-live.mjs"
     ) {
@@ -99,6 +109,10 @@ function runStaticChecks() {
     }
   }
 
+  if (!existsSync(buildOutputCheckPath)) {
+    failures.push("scripts/check-build-output.mjs is missing.");
+  }
+
   return failures;
 }
 
@@ -108,7 +122,9 @@ async function runLiveChecks() {
 
   for (const key of ["DATABASE_URL", "SHOPIFY_TEST_SHOP"]) {
     if (!process.env[key]) {
-      failures.push(`${key} is required for the live smoke test.`);
+      failures.push(
+        `${key} is required for the live smoke test. Add it to .env or export it before running npm run smoke:shopify.`,
+      );
     }
   }
 
