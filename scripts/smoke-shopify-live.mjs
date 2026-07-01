@@ -91,9 +91,15 @@ function runStaticChecks() {
     const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
     if (
       packageJson.scripts?.["risk:audit"] !==
-      "npm run smoke:shopify:static && npm run typecheck && npm run lint && node scripts/check-build-output.mjs"
+      "npm run smoke:shopify:static && npm run test:local && npm run typecheck && npm run lint && node scripts/check-build-output.mjs"
     ) {
       failures.push("package.json is missing the risk:audit script.");
+    }
+    if (
+      packageJson.scripts?.["test:local"] !==
+      "vite-node scripts/risk-regression-tests.ts"
+    ) {
+      failures.push("package.json is missing the test:local script.");
     }
     if (
       packageJson.scripts?.["smoke:shopify"] !==

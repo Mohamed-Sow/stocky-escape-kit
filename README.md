@@ -41,8 +41,9 @@ Run local static checks without Shopify credentials:
 npm run risk:audit
 ```
 
-`risk:audit` verifies static Shopify prerequisites, TypeScript, lint, and the
-production build output. It fails if React Router future-flag warnings return.
+`risk:audit` verifies static Shopify prerequisites, local parser/export
+regression tests, TypeScript, lint, and the production build output. It fails if
+React Router future-flag warnings return.
 
 Run live verification after installing the app on a development store:
 
