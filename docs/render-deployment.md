@@ -10,13 +10,16 @@ This app is prepared for a low-maintenance Render production setup:
 
 ## Create the Render services
 
-1. Push this repo to the Git provider connected to Render.
-2. In Render, create a new Blueprint from the repo root. Render should detect `render.yaml`.
-3. When prompted for secret values, provide:
+1. Add a payment method to the Render workspace. The `starter` web service and
+   `basic-1gb` Postgres database are paid resources; without billing enabled,
+   Render CLI validation returns `need_payment_info` for both resources.
+2. Push this repo to the Git provider connected to Render.
+3. In Render, create a new Blueprint from the repo root. Render should detect `render.yaml`.
+4. When prompted for secret values, provide:
    - `SHOPIFY_API_KEY`: the app client ID from Shopify.
    - `SHOPIFY_API_SECRET`: the app client secret from Shopify.
    - `SHOPIFY_APP_URL`: the final Render HTTPS URL, for example `https://stocky-escape-kit.onrender.com`.
-4. Keep `DATABASE_URL` sourced from the Blueprint database reference. Do not paste a local database URL.
+5. Keep `DATABASE_URL` sourced from the Blueprint database reference. Do not paste a local database URL.
 
 ## Shopify production URL setup
 
