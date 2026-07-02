@@ -65,6 +65,14 @@ If live smoke fails before contacting Shopify, set `DATABASE_URL` and
 `SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct GraphQL proof.
 Approve a test billing plan before rerunning `npm run smoke:shopify`.
 
+## Production Hosting
+
+Render deployment setup is tracked in `render.yaml`. The expected low-maintenance
+production setup is a Docker web service on the `starter` plan plus Render
+Postgres `basic-1gb`.
+
+See `docs/render-deployment.md` before creating or updating Render services.
+
 ## Suggested Pricing
 
 - Basic: `$99` migration archive and audit.

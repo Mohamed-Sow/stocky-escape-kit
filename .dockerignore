@@ -1,8 +1,12 @@
+.git
 .cache
 .env
 .env.*
-.git
+!.env.example
 .react-router
-build
 node_modules
+build
 public/build
+.shopify
+.DS_Store
+npm-debug.log*
