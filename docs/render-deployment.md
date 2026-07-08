@@ -56,12 +56,14 @@ For the live smoke, set `DATABASE_URL` to the Render database connection string 
 - Products and locations GraphQL queries succeed.
 
 If local database access is blocked by the Render Postgres IP allow list, set a
-secret `SHOPIFY_SMOKE_TOKEN` in Render and call the protected hosted smoke
-endpoint instead:
+secret `SHOPIFY_SMOKE_TOKEN` in Render and run the smoke script against the
+protected hosted smoke endpoint instead:
 
 ```sh
-curl -H "Authorization: Bearer $SHOPIFY_SMOKE_TOKEN" \
-  "https://stocky-escape-kit.onrender.com/ops/shopify-smoke?shop=stocky-escape-kit-partner-dev.myshopify.com"
+SHOPIFY_TEST_SHOP=stocky-escape-kit-partner-dev.myshopify.com \
+SHOPIFY_SMOKE_ENDPOINT_URL=https://stocky-escape-kit.onrender.com/ops/shopify-smoke \
+SHOPIFY_SMOKE_TOKEN=$SHOPIFY_SMOKE_TOKEN \
+npm run smoke:shopify
 ```
 
 ## Submission readiness notes

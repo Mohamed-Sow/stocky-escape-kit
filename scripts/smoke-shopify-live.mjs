@@ -66,6 +66,8 @@ function runStaticChecks() {
       "SHOPIFY_SYNC_VARIANT_LIMIT",
       "SHOPIFY_TEST_SHOP",
       "SHOPIFY_ADMIN_ACCESS_TOKEN",
+      "SHOPIFY_SMOKE_ENDPOINT_URL",
+      "SHOPIFY_SMOKE_TOKEN",
     ]) {
       if (!envExample.includes(`${key}=`)) {
         failures.push(`.env.example is missing ${key}.`);
@@ -135,6 +137,8 @@ async function runLiveChecks() {
   const failures = [];
   const shop = normalizeShop(process.env.SHOPIFY_TEST_SHOP);
   const directAccessToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim();
+  const smokeEndpointUrl = process.env.SHOPIFY_SMOKE_ENDPOINT_URL?.trim();
+  const smokeToken = process.env.SHOPIFY_SMOKE_TOKEN?.trim();
 
   if (!process.env.SHOPIFY_TEST_SHOP) {
     failures.push(
@@ -146,14 +150,28 @@ async function runLiveChecks() {
     failures.push("SHOPIFY_TEST_SHOP must be a myshopify.com shop domain.");
   }
 
-  if (!directAccessToken && !process.env.DATABASE_URL) {
+  if (smokeEndpointUrl && !smokeToken) {
     failures.push(
-      "Set either SHOPIFY_ADMIN_ACCESS_TOKEN for direct GraphQL smoke proof, or DATABASE_URL so the script can load the installed app's offline Prisma session.",
+      "SHOPIFY_SMOKE_TOKEN is required when SHOPIFY_SMOKE_ENDPOINT_URL is set.",
+    );
+  }
+
+  if (!directAccessToken && !process.env.DATABASE_URL && !smokeEndpointUrl) {
+    failures.push(
+      "Set SHOPIFY_ADMIN_ACCESS_TOKEN for direct GraphQL proof, DATABASE_URL for Prisma offline-session proof, or SHOPIFY_SMOKE_ENDPOINT_URL plus SHOPIFY_SMOKE_TOKEN for hosted smoke proof.",
     );
   }
 
   if (failures.length > 0) {
     return failures;
+  }
+
+  if (smokeEndpointUrl) {
+    return verifyHostedSmokeEndpoint({
+      endpointUrl: smokeEndpointUrl,
+      shop,
+      smokeToken,
+    });
   }
 
   if (directAccessToken) {
@@ -192,6 +210,90 @@ async function runLiveChecks() {
   } finally {
     await prisma.$disconnect();
   }
+}
+
+async function verifyHostedSmokeEndpoint({ endpointUrl, shop, smokeToken }) {
+  let response;
+  let payload;
+
+  try {
+    const url = new URL(endpointUrl);
+    url.searchParams.set("shop", shop);
+
+    response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${smokeToken}`,
+      },
+    });
+    payload = await response.json();
+  } catch (error) {
+    return [
+      error instanceof Error
+        ? `Hosted Shopify smoke endpoint failed: ${error.message}`
+        : "Hosted Shopify smoke endpoint failed with an unknown error.",
+    ];
+  }
+
+  if (!response.ok || payload.ok !== true) {
+    const remoteFailures = Array.isArray(payload.failures)
+      ? payload.failures.join("; ")
+      : payload.error;
+    return [
+      `Hosted Shopify smoke endpoint returned HTTP ${response.status}: ${
+        remoteFailures || "unknown failure"
+      }`,
+    ];
+  }
+
+  const grantedScopes = Array.isArray(payload.grantedScopes)
+    ? payload.grantedScopes
+    : [];
+  const missingScopes = REQUIRED_SCOPES.filter(
+    (scope) => !grantedScopes.includes(scope),
+  );
+  const failures = [];
+
+  if (payload.shop !== shop) {
+    failures.push(
+      `Hosted Shopify smoke endpoint returned shop ${payload.shop ?? "unknown"} instead of ${shop}.`,
+    );
+  }
+
+  if (missingScopes.length > 0) {
+    failures.push(
+      `Installed app is missing scopes: ${missingScopes.join(", ")}.`,
+    );
+  }
+
+  if (!BILLING_PLAN_NAMES.includes(payload.billingName)) {
+    failures.push(
+      `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
+    );
+  }
+
+  if (typeof payload.productSamples !== "number") {
+    failures.push("Hosted Shopify smoke endpoint returned no product sample count.");
+  }
+
+  if (typeof payload.locationSamples !== "number") {
+    failures.push(
+      "Hosted Shopify smoke endpoint returned no location sample count.",
+    );
+  }
+
+  if (failures.length === 0) {
+    printLiveSummary({
+      shop,
+      tokenSource: payload.tokenSource ?? "Hosted smoke endpoint",
+      grantedScopes,
+      billingName: payload.billingName,
+      productSamples: payload.productSamples,
+      locationSamples: payload.locationSamples,
+    });
+  }
+
+  return failures;
 }
 
 async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
