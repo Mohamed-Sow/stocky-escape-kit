@@ -6,6 +6,9 @@ This app is prepared for a low-maintenance Render production setup:
 - Database: Render Postgres, `basic-1gb` plan.
 - Region: `ohio` for both services.
 - Health check: `/healthz`.
+- Production URL: `https://stocky-escape-kit.onrender.com`.
+- Render service ID: `srv-d978pp0js32c73bv11ag`.
+- Render Postgres ID: `dpg-d978etfaqgkc73d4e59g-a`.
 - Expected cost target: about `$26/month` before bandwidth or future upgrades.
 
 ## Create the Render services
@@ -14,6 +17,10 @@ This app is prepared for a low-maintenance Render production setup:
    `basic-1gb` Postgres database are paid resources; without billing enabled,
    Render CLI validation returns `need_payment_info` for both resources.
 2. Push this repo to the Git provider connected to Render.
+   - Current deploy source: `https://github.com/Mohamed-Sow/stocky-escape-kit`.
+   - The repo is public because Render's private GitHub provider connection did
+     not persist for this workspace. No production secrets are committed; keep
+     secrets in Render environment variables only.
 3. In Render, create a new Blueprint from the repo root. Render should detect `render.yaml`.
 4. When prompted for secret values, provide:
    - `SHOPIFY_API_KEY`: the app client ID from Shopify.
