@@ -1,0 +1,6 @@
+PO Number,Status,Supplier Name,SKU,Product Name,Quantity,Unit Cost,Location,Order Date,Expected At,Notes
+PO-1042,Open,TrailForge Wholesale,SE-KETTLE-1,Camp Kettle Stainless,24,17.75,Main Warehouse,2026-07-01,2026-07-22,"Partial shipment promised"
+PO-1042,Partially Received,North Ridge Supply,DUP-100,Basecamp Mug,72,3.00,Retail Floor,2026-06-20,2026-07-10,"Remaining mugs not received"
+PO-1043,Ordered,Old Supplier,UNMATCHED-404,Legacy Tent Stake,200,0.80,Overflow Warehouse,2026-05-15,2026-06-01,"Supplier closing account"
+PO-1044,Received,AquaPeak Direct,SE-FILTER-2,Replacement Filter 2-Pack,48,3.75,Main Warehouse,2026-04-11,2026-04-20,"Closed purchase order"
+PO-1045,Pending,Unknown Vendor,,Mystery Repair Clip,15,1.00,Main Warehouse,2026-07-03,2026-07-30,"Missing SKU row"

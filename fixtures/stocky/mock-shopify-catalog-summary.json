@@ -1,0 +1,168 @@
+{
+  "generatedAt": "2026-07-08T00:00:00.000Z",
+  "truncated": false,
+  "limit": 5000,
+  "variants": [
+    {
+      "id": "gid://shopify/ProductVariant/1001",
+      "sku": "SE-KETTLE-1",
+      "barcode": "012345678901",
+      "displayName": "Camp Kettle Stainless",
+      "productId": "gid://shopify/Product/100",
+      "productTitle": "Camp Kettle Stainless",
+      "vendor": "TrailForge",
+      "inventoryItemId": "gid://shopify/InventoryItem/1001",
+      "inventorySku": "SE-KETTLE-1",
+      "unitCost": {
+        "amount": "18.45",
+        "currencyCode": "USD"
+      },
+      "locations": [
+        {
+          "id": "gid://shopify/Location/1",
+          "name": "Main Warehouse",
+          "quantities": {
+            "available": 18,
+            "on_hand": 20
+          }
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/ProductVariant/1002",
+      "sku": "SE-FILTER-2",
+      "barcode": null,
+      "displayName": "Replacement Filter 2-Pack",
+      "productId": "gid://shopify/Product/101",
+      "productTitle": "Replacement Filter 2-Pack",
+      "vendor": "AquaPeak",
+      "inventoryItemId": "gid://shopify/InventoryItem/1002",
+      "inventorySku": "SE-FILTER-2",
+      "unitCost": {
+        "amount": "4.10",
+        "currencyCode": "USD"
+      },
+      "locations": [
+        {
+          "id": "gid://shopify/Location/1",
+          "name": "Main Warehouse",
+          "quantities": {
+            "available": 42,
+            "on_hand": 44
+          }
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/ProductVariant/1003",
+      "sku": "DUP-100",
+      "barcode": "444555666777",
+      "displayName": "Basecamp Mug / White",
+      "productId": "gid://shopify/Product/102",
+      "productTitle": "Basecamp Mug",
+      "vendor": "North Ridge",
+      "inventoryItemId": "gid://shopify/InventoryItem/1003",
+      "inventorySku": "DUP-100",
+      "unitCost": {
+        "amount": "3.25",
+        "currencyCode": "USD"
+      },
+      "locations": [
+        {
+          "id": "gid://shopify/Location/2",
+          "name": "Retail Floor",
+          "quantities": {
+            "available": 20,
+            "on_hand": 24
+          }
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/ProductVariant/1004",
+      "sku": "DUP-100",
+      "barcode": null,
+      "displayName": "Basecamp Mug / Blue",
+      "productId": "gid://shopify/Product/102",
+      "productTitle": "Basecamp Mug",
+      "vendor": null,
+      "inventoryItemId": "gid://shopify/InventoryItem/1004",
+      "inventorySku": "DUP-100",
+      "unitCost": null,
+      "locations": [
+        {
+          "id": "gid://shopify/Location/2",
+          "name": "Retail Floor",
+          "quantities": {
+            "available": 31,
+            "on_hand": 31
+          }
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/ProductVariant/1005",
+      "sku": "case-lower",
+      "barcode": "222333444555",
+      "displayName": "Mixed Case SKU Sample",
+      "productId": "gid://shopify/Product/103",
+      "productTitle": "Mixed Case SKU Sample",
+      "vendor": "Case Vendor",
+      "inventoryItemId": "gid://shopify/InventoryItem/1005",
+      "inventorySku": "case-lower",
+      "unitCost": {
+        "amount": "6.00",
+        "currencyCode": "USD"
+      },
+      "locations": [
+        {
+          "id": "gid://shopify/Location/1",
+          "name": "Main Warehouse",
+          "quantities": {
+            "available": 4,
+            "on_hand": 4
+          }
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/ProductVariant/1006",
+      "sku": "NO-COST",
+      "barcode": "777888999000",
+      "displayName": "Missing Cost Product",
+      "productId": "gid://shopify/Product/104",
+      "productTitle": "Missing Cost Product",
+      "vendor": "Supplier With Blank Cost",
+      "inventoryItemId": "gid://shopify/InventoryItem/1006",
+      "inventorySku": "NO-COST",
+      "unitCost": null,
+      "locations": [
+        {
+          "id": "gid://shopify/Location/1",
+          "name": "Main Warehouse",
+          "quantities": {
+            "available": 0,
+            "on_hand": 0
+          }
+        }
+      ]
+    }
+  ],
+  "duplicateSkus": [
+    {
+      "sku": "DUP-100",
+      "count": 2,
+      "variants": ["Basecamp Mug / White", "Basecamp Mug / Blue"]
+    }
+  ],
+  "locations": [
+    {
+      "id": "gid://shopify/Location/1",
+      "name": "Main Warehouse"
+    },
+    {
+      "id": "gid://shopify/Location/2",
+      "name": "Retail Floor"
+    }
+  ]
+}

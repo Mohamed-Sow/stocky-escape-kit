@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { BillingStatus, StockyReportType } from "@prisma/client";
 import { readCatalogSummary } from "../app/lib/catalog.server";
@@ -13,6 +15,19 @@ import {
   normalizeHeader,
   parseStockyCsv,
 } from "../app/lib/stocky-parser.server";
+
+const STOCKY_FIXTURE_DIR = path.join(process.cwd(), "fixtures", "stocky");
+
+function readStockyFixture(filename: string) {
+  return readFileSync(path.join(STOCKY_FIXTURE_DIR, filename), "utf8");
+}
+
+function parseStockyFixture(filename: string) {
+  return parseStockyCsv({
+    filename,
+    content: readStockyFixture(filename),
+  });
+}
 
 test("CSV parser preserves quoted commas, newlines, and escaped quotes", () => {
   const csv = 'SKU,Title,Notes\n"ABC,1","Line\nBreak","He said ""yes"""';
@@ -172,3 +187,171 @@ test("Prisma billing enum still contains app statuses used by store updates", ()
   assert.equal(BillingStatus.ACTIVE, "ACTIVE");
   assert.equal(BillingStatus.NOT_STARTED, "NOT_STARTED");
 });
+
+test("mock Stocky fixture pack covers every supported report type", () => {
+  const expected = new Map([
+    ["stocky-products-edge-cases.csv", StockyReportType.PRODUCTS],
+    ["stocky-purchase-orders.csv", StockyReportType.PURCHASE_ORDERS],
+    ["stocky-stocktakes.csv", StockyReportType.STOCKTAKES],
+    ["stocky-inventory-activity.csv", StockyReportType.INVENTORY_ACTIVITY],
+    ["stocky-historical-costs.csv", StockyReportType.HISTORICAL_COSTS],
+    ["stocky-vendors.csv", StockyReportType.VENDORS],
+    ["stocky-unknown-export.csv", StockyReportType.UNKNOWN],
+    ["stocky-malformed-unclosed-quote.csv", StockyReportType.PRODUCTS],
+  ]);
+
+  const fixtureCsvs = readdirSync(STOCKY_FIXTURE_DIR)
+    .filter((filename) => filename.endsWith(".csv"))
+    .sort();
+
+  assert.deepEqual(fixtureCsvs, [...expected.keys()].sort());
+
+  for (const [filename, reportType] of expected) {
+    const parsed = parseStockyFixture(filename);
+    assert.equal(parsed.reportType, reportType, filename);
+    assert.ok(parsed.rowCount > 0, filename);
+  }
+});
+
+test("product fixture preserves hard CSV and Stocky edge cases", () => {
+  const parsed = parseStockyFixture("stocky-products-edge-cases.csv");
+
+  assert.equal(parsed.rowCount, 8);
+  assert.deepEqual(parsed.unknownColumns, ["Reorder Point", "Notes"]);
+
+  const filterRecord = parsed.records.find(
+    (record) => record.sku === "SE-FILTER-2",
+  );
+  assert.ok(filterRecord);
+  assert.equal(
+    getNormalized(filterRecord, "title"),
+    "Replacement Filter\n2-Pack",
+  );
+  assert.equal(getRaw(filterRecord, "Notes"), "Multiline Stocky note");
+
+  assert.equal(
+    parsed.records.filter((record) => record.sku === "DUP-100").length,
+    2,
+  );
+  assert.ok(
+    parsed.records.some((record) => record.warnings.includes("missing_sku")),
+  );
+
+  const mismatchedRecord = parsed.records.find(
+    (record) => record.sku === "BROKEN-COL",
+  );
+  assert.ok(mismatchedRecord);
+  assert.deepEqual(mismatchedRecord.warnings, ["column_count_mismatch"]);
+});
+
+test("fixture pack captures report-specific migration risks", () => {
+  const purchaseOrders = parseStockyFixture("stocky-purchase-orders.csv");
+  const openStatuses = purchaseOrders.records
+    .map((record) => getNormalized(record, "status"))
+    .filter((status) => status && status !== "Received");
+  assert.deepEqual(openStatuses, [
+    "Open",
+    "Partially Received",
+    "Ordered",
+    "Pending",
+  ]);
+  assert.ok(
+    purchaseOrders.records.some((record) =>
+      record.warnings.includes("missing_sku"),
+    ),
+  );
+
+  const stocktakes = parseStockyFixture("stocky-stocktakes.csv");
+  const negativeAdjustment = stocktakes.records.find(
+    (record) => record.sku === "NEG-ADJ",
+  );
+  assert.ok(negativeAdjustment);
+  assert.equal(getNormalized(negativeAdjustment, "quantity"), "-2");
+  assert.equal(getNormalized(negativeAdjustment, "location"), "Returns Desk");
+
+  const inventoryActivity = parseStockyFixture(
+    "stocky-inventory-activity.csv",
+  );
+  assert.ok(
+    inventoryActivity.records.some((record) =>
+      record.warnings.includes("missing_sku"),
+    ),
+  );
+
+  const costs = parseStockyFixture("stocky-historical-costs.csv");
+  const blankCost = costs.records.find((record) => record.sku === "NO-COST");
+  assert.ok(blankCost);
+  assert.equal(getNormalized(blankCost, "cost"), null);
+
+  const vendors = parseStockyFixture("stocky-vendors.csv");
+  assert.deepEqual(vendors.unknownColumns, [
+    "Email",
+    "Phone",
+    "Payment Terms",
+    "Last Ordered At",
+  ]);
+  assert.equal(vendors.warningCount, 8);
+
+  const unknown = parseStockyFixture("stocky-unknown-export.csv");
+  assert.equal(unknown.reportType, StockyReportType.UNKNOWN);
+  assert.deepEqual(unknown.unknownColumns, [
+    "Export Label",
+    "Item Description",
+    "Freeform Value",
+  ]);
+
+  const malformed = parseStockyFixture("stocky-malformed-unclosed-quote.csv");
+  assert.deepEqual(malformed.parseErrors, [
+    "CSV ended before a quoted field was closed.",
+  ]);
+});
+
+test("mock Shopify catalog fixture validates audit-risk shape", () => {
+  const summary = readCatalogSummary(
+    JSON.parse(readStockyFixture("mock-shopify-catalog-summary.json")),
+  );
+
+  assert.ok(summary);
+  assert.equal(summary.variants.length, 6);
+  assert.deepEqual(summary.locations.map((location) => location.name), [
+    "Main Warehouse",
+    "Retail Floor",
+  ]);
+  assert.deepEqual(summary.duplicateSkus, [
+    {
+      sku: "DUP-100",
+      count: 2,
+      variants: ["Basecamp Mug / White", "Basecamp Mug / Blue"],
+    },
+  ]);
+
+  const duplicateVariants = summary.variants.filter(
+    (variant) => variant.sku === "DUP-100",
+  );
+  assert.equal(duplicateVariants.length, 2);
+  assert.ok(duplicateVariants.some((variant) => !variant.unitCost));
+  assert.ok(duplicateVariants.some((variant) => !variant.barcode));
+  assert.ok(duplicateVariants.some((variant) => !variant.vendor));
+});
+
+function getNormalized(
+  record: ReturnType<typeof parseStockyFixture>["records"][number],
+  field: string,
+) {
+  const payload = record.normalizedPayload as {
+    normalized?: Record<string, string | null>;
+  };
+
+  return payload.normalized?.[field];
+}
+
+function getRaw(
+  record: ReturnType<typeof parseStockyFixture>["records"][number],
+  field: string,
+) {
+  const payload = record.normalizedPayload as {
+    raw?: Record<string, string>;
+  };
+
+  return payload.raw?.[field];
+}

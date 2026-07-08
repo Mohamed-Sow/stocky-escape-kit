@@ -156,7 +156,6 @@ function detectReportType(filename: string, headers: string[]) {
 
   if (
     name.includes("cost") ||
-    headerSet.has("unit_cost") ||
     headerSet.has("average_cost") ||
     headerSet.has("landed_cost")
   ) {

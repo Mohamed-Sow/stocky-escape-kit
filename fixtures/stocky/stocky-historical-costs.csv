@@ -1,0 +1,5 @@
+SKU,Product Name,Average Cost,Landed Cost,Currency,Effective Date,Supplier Name
+SE-KETTLE-1,Camp Kettle Stainless,18.45,19.02,USD,2026-06-30,TrailForge Wholesale
+DUP-100,Basecamp Mug,3.25,3.60,USD,2026-06-30,North Ridge Supply
+UNMATCHED-404,Legacy Tent Stake,0.95,1.02,USD,2025-12-31,Old Supplier
+NO-COST,Missing Cost Product,,,USD,2026-06-30,Supplier With Blank Cost

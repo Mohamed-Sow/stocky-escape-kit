@@ -1,0 +1,10 @@
+SKU,Product Name,Vendor,Barcode,Unit Cost,Supplier Name,Location,Reorder Point,Notes
+SE-KETTLE-1,"Camp Kettle, Stainless",TrailForge,012345678901,18.45,TrailForge Wholesale,Main Warehouse,12,"Top seller; keep boxed"
+SE-FILTER-2,"Replacement Filter
+2-Pack",AquaPeak,998877665544,4.10,AquaPeak Direct,Main Warehouse,24,"Multiline Stocky note"
+DUP-100,Basecamp Mug,North Ridge,444555666777,3.25,North Ridge Supply,Main Warehouse,10,
+DUP-100,Basecamp Mug - Blue,North Ridge,444555666778,3.25,North Ridge Supply,Retail Floor,8,"Duplicate Stocky SKU across color variant"
+UNMATCHED-404,Legacy Tent Stake,Old Supplier,,0.95,Old Supplier,Overflow Warehouse,50,"SKU no longer in Shopify"
+,Mystery Repair Clip,Unknown Vendor,555555555555,1.10,Unknown Vendor,Main Warehouse,5,"Missing SKU should be critical"
+CASE-LOWER,mixed case sku sample,Case Vendor,222333444555,6.00,Case Vendor,Outlet Pop-up,6,"Location mismatch candidate"
+BROKEN-COL,Column Count Mismatch,Vendor With Extra,101010101010,2.20,Extra Supplier,Main Warehouse,3,"Has an extra trailing value",unexpected extra value

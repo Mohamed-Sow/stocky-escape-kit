@@ -1,0 +1,6 @@
+Stocktake Number,SKU,Product Name,Counted,Location,Completed At,Bin,Counted By
+ST-2026-07,SE-KETTLE-1,Camp Kettle Stainless,18,Main Warehouse,2026-07-05,A1-01,Alex
+ST-2026-07,DUP-100,Basecamp Mug,51,Retail Floor,2026-07-05,F2-07,Alex
+ST-2026-07,CASE-LOWER,mixed case sku sample,4,Outlet Pop-up,2026-07-05,OP-03,Sam
+ST-2026-07,,Unlabeled Bin Item,7,Main Warehouse,2026-07-05,A9-99,Sam
+ST-2026-07,NEG-ADJ,Negative adjustment sample,-2,Returns Desk,2026-07-05,R1-02,Mina

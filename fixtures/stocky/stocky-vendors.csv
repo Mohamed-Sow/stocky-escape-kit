@@ -1,0 +1,5 @@
+Supplier Name,Supplier Code,Email,Phone,Payment Terms,Last Ordered At
+TrailForge Wholesale,TFW,orders@example.invalid,555-0101,Net 30,2026-07-01
+AquaPeak Direct,AQP,accounts@example.invalid,555-0102,Prepaid,2026-04-11
+North Ridge Supply,NRS,sales@example.invalid,555-0103,Net 15,2026-06-20
+Old Supplier,OLD,,555-0199,COD,2025-12-31

@@ -1,0 +1,2 @@
+SKU,Product Name,Vendor,Notes
+BROKEN-QUOTE,"Unclosed quote item,Vendor Name,This row should report a parse error

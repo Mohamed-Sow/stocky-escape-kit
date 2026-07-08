@@ -1,0 +1,5 @@
+Date,Activity Type,Reference,SKU,Product Name,Quantity Change,Location,User,Reason
+2026-07-01,Sale,SO-9001,SE-KETTLE-1,Camp Kettle Stainless,-1,Main Warehouse,app,sale
+2026-07-02,Adjustment,ADJ-77,NEG-ADJ,Negative adjustment sample,-2,Returns Desk,manager,"Damaged return"
+2026-07-02,Transfer,TR-12,DUP-100,Basecamp Mug,-12,Retail Floor,manager,"Moved to warehouse"
+2026-07-03,Correction,COR-8,,Unknown SKU Adjustment,5,Main Warehouse,manager,"SKU omitted in Stocky"
