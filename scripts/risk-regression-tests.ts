@@ -52,6 +52,30 @@ test("CSV parser preserves quoted commas, newlines, and escaped quotes", () => {
   );
 });
 
+test("CSV parser accepts semicolon and tab-delimited exports", () => {
+  assert.deepEqual(parseCsv('SKU;Notes\nABC;"contains; delimiter"'), {
+    headers: ["SKU", "Notes"],
+    rows: [
+      {
+        sourceRowNumber: 2,
+        values: ["ABC", "contains; delimiter"],
+      },
+    ],
+    errors: [],
+  });
+
+  assert.deepEqual(parseCsv("SKU\tQty\nABC\t12"), {
+    headers: ["SKU", "Qty"],
+    rows: [
+      {
+        sourceRowNumber: 2,
+        values: ["ABC", "12"],
+      },
+    ],
+    errors: [],
+  });
+});
+
 test("Stocky parser detects product exports and preserves unknown columns", () => {
   const parsed = parseStockyCsv({
     filename: "stocky-products.csv",
@@ -191,6 +215,8 @@ test("Prisma billing enum still contains app statuses used by store updates", ()
 test("mock Stocky fixture pack covers every supported report type", () => {
   const expected = new Map([
     ["stocky-products-edge-cases.csv", StockyReportType.PRODUCTS],
+    ["stocky-shopify-products-tab-export.csv", StockyReportType.PRODUCTS],
+    ["stocky-po-proprietary-semicolon.csv", StockyReportType.PURCHASE_ORDERS],
     ["stocky-purchase-orders.csv", StockyReportType.PURCHASE_ORDERS],
     ["stocky-stocktakes.csv", StockyReportType.STOCKTAKES],
     ["stocky-inventory-activity.csv", StockyReportType.INVENTORY_ACTIVITY],
@@ -242,6 +268,59 @@ test("product fixture preserves hard CSV and Stocky edge cases", () => {
   );
   assert.ok(mismatchedRecord);
   assert.deepEqual(mismatchedRecord.warnings, ["column_count_mismatch"]);
+});
+
+test("proprietary delimiter fixtures preserve odd Stocky and Shopify columns", () => {
+  const proprietaryPo = parseStockyFixture(
+    "stocky-po-proprietary-semicolon.csv",
+  );
+
+  assert.equal(proprietaryPo.rowCount, 3);
+  assert.deepEqual(proprietaryPo.unknownColumns, [
+    "Total Cost (base)",
+    "Lot / Serial",
+    "RFID Tag",
+    "Freight & Customs",
+    "Internal Code",
+    "Internal Code",
+  ]);
+
+  const firstPoRecord = proprietaryPo.records[0];
+  assert.equal(firstPoRecord.sku, "PLUS+SKU.1");
+  assert.equal(getNormalized(firstPoRecord, "reference"), "PO-2001");
+  assert.equal(getNormalized(firstPoRecord, "status"), "Not received");
+  assert.equal(getNormalized(firstPoRecord, "supplier"), "SUP-REF-771");
+  assert.equal(getNormalized(firstPoRecord, "quantity"), "6");
+  assert.equal(getNormalized(firstPoRecord, "cost"), "12,50");
+  assert.equal(getNormalized(firstPoRecord, "location"), "Main Warehouse");
+  assert.equal(
+    getRaw(firstPoRecord, "Freight & Customs"),
+    "Duties; ocean freight",
+  );
+  assert.equal(getRaw(firstPoRecord, "Internal Code"), "DEPT-17");
+  assert.equal(getRaw(firstPoRecord, "Internal Code #2"), "BUYER-ALPHA");
+  assert.deepEqual(getMeta(firstPoRecord).duplicateHeaders, ["Internal Code"]);
+
+  const tabProductExport = parseStockyFixture(
+    "stocky-shopify-products-tab-export.csv",
+  );
+
+  assert.equal(tabProductExport.rowCount, 3);
+  assert.deepEqual(tabProductExport.unknownColumns, [
+    "Handle",
+    "Variant Inventory Policy",
+  ]);
+
+  const firstProductRecord = tabProductExport.records[0];
+  assert.equal(firstProductRecord.sku, "SE-KETTLE-1");
+  assert.equal(getNormalized(firstProductRecord, "barcode"), "012345678901");
+  assert.equal(getNormalized(firstProductRecord, "cost"), "18.45");
+  assert.equal(getNormalized(firstProductRecord, "quantity"), "18");
+  assert.ok(
+    tabProductExport.records.some((record) =>
+      record.warnings.includes("missing_sku"),
+    ),
+  );
 });
 
 test("fixture pack captures report-specific migration risks", () => {
@@ -296,7 +375,6 @@ test("fixture pack captures report-specific migration risks", () => {
   assert.equal(unknown.reportType, StockyReportType.UNKNOWN);
   assert.deepEqual(unknown.unknownColumns, [
     "Export Label",
-    "Item Description",
     "Freeform Value",
   ]);
 
@@ -354,4 +432,14 @@ function getRaw(
   };
 
   return payload.raw?.[field];
+}
+
+function getMeta(record: ReturnType<typeof parseStockyFixture>["records"][number]) {
+  const payload = record.normalizedPayload as {
+    meta?: {
+      duplicateHeaders?: string[];
+    };
+  };
+
+  return payload.meta ?? {};
 }

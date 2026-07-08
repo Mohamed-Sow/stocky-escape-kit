@@ -15,5 +15,9 @@ The pack intentionally covers:
 - Unknown exports and malformed CSV that should remain diagnosable.
 - A mock Shopify catalog summary with duplicate SKUs, missing metadata, and a
   smaller location set than the Stocky exports.
+- Semicolon- and tab-delimited files that are still exported with CSV-like
+  extensions.
+- Proprietary/custom columns such as supplier references, lot/serial data, RFID
+  identifiers, freight/customs notes, and duplicate internal-code headers.
 
 Use these files when real Stocky exports are unavailable.

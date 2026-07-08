@@ -1,0 +1,4 @@
+P.O. Number;Line Status;Supplier Ref #;Stock Code;Item Description;Qty Ordered;Cost (base);Total Cost (base);Receive Location;Expected Date;Lot / Serial;RFID Tag;Freight & Customs;Internal Code;Internal Code
+PO-2001;Not received;SUP-REF-771;PLUS+SKU.1;Accessory Kit - Pro;6;12,50;75,00;Main Warehouse;2026-07-25;LOT-2026-A;RFID-000001;"Duties; ocean freight";DEPT-17;BUYER-ALPHA
+PO-2001;Rejected;SUP-REF-771;BAD/SKU;Damaged Return Pack;2;4,25;8,50;Returns Desk;2026-07-25;LOT-2026-B;RFID-000002;"Rejected on dock";DEPT-17;BUYER-BETA
+PO-2002;Extra Received;SUP-REF-888;CASE-LOWER;Mixed Case SKU Sample;3;6,00;18,00;Outlet Pop-up;2026-08-01;LOT-2026-C;RFID-000003;"Overage from supplier";DEPT-22;BUYER-GAMMA

@@ -1,0 +1,4 @@
+Handle	Title	Variant SKU	Variant Barcode	Cost per item	Variant Inventory Qty	Vendor	Variant Inventory Policy
+camp-kettle	Camp Kettle Stainless	SE-KETTLE-1	012345678901	18.45	18	TrailForge	deny
+filter-pack	Replacement Filter 2-Pack	SE-FILTER-2	998877665544	4.10	42	AquaPeak	deny
+missing-sku	Spreadsheet Row Without SKU		111222333444	2.00	5	Odd Vendor	deny

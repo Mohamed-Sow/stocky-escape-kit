@@ -8,13 +8,13 @@ export type CsvParseResult = {
 };
 
 export function parseCsv(input: string): CsvParseResult {
+  const text = input.replace(/^\uFEFF/, "");
+  const delimiter = detectDelimiter(text);
   const rows: string[][] = [];
   const errors: string[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
-
-  const text = input.replace(/^\uFEFF/, "");
 
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
@@ -34,7 +34,7 @@ export function parseCsv(input: string): CsvParseResult {
 
     if (char === '"' && field.length === 0) {
       inQuotes = true;
-    } else if (char === ",") {
+    } else if (char === delimiter) {
       row.push(field);
       field = "";
     } else if (char === "\n") {
@@ -86,4 +86,43 @@ export function toCsv(rows: string[][]) {
         .join(","),
     )
     .join("\n");
+}
+
+function detectDelimiter(text: string) {
+  const firstNonEmptyLine =
+    text.split(/\r?\n/).find((line) => line.trim().length > 0) ?? "";
+  const candidates = [",", ";", "\t"];
+
+  return candidates
+    .map((delimiter) => ({
+      delimiter,
+      count: countOutsideQuotes(firstNonEmptyLine, delimiter),
+    }))
+    .sort((left, right) => right.count - left.count)[0].delimiter;
+}
+
+function countOutsideQuotes(text: string, delimiter: string) {
+  let count = 0;
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const nextChar = text[index + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (!inQuotes && char === delimiter) {
+      count += 1;
+    }
+  }
+
+  return count;
 }
