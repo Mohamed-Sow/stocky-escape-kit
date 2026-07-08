@@ -30,7 +30,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       isOnline: false,
     },
     orderBy: {
-      id: "asc",
+      id: "desc",
     },
   });
 
@@ -41,10 +41,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
   }
 
-  const payload = await adminGraphql({
-    shop,
-    accessToken: session.accessToken,
-  });
+  let payload: SmokePayload;
+
+  try {
+    payload = await adminGraphql({
+      shop,
+      accessToken: session.accessToken,
+    });
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        shop,
+        tokenSource: "Prisma offline session",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown Shopify GraphQL smoke failure.",
+      },
+      { status: 424 },
+    );
+  }
   const installation = payload.data?.currentAppInstallation;
   const grantedScopes =
     installation?.accessScopes.map((scope) => scope.handle).sort() ?? [];
