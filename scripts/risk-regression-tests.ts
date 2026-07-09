@@ -258,6 +258,22 @@ test("billing helpers validate configured App Pricing subscription names", () =>
     }),
     false,
   );
+  assert.equal(
+    hasActiveBillingSubscription({
+      hasActivePayment: false,
+      oneTimePurchases: [],
+      appSubscriptions: [activeSubscription],
+    }),
+    false,
+  );
+  assert.equal(
+    getActiveBillingName({
+      hasActivePayment: false,
+      oneTimePurchases: [],
+      appSubscriptions: [activeSubscription],
+    }),
+    null,
+  );
 
   const originalAppHandle = process.env.SHOPIFY_APP_HANDLE;
   try {

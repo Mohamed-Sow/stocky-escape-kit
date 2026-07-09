@@ -43,6 +43,7 @@ function runStaticChecks() {
   const failures = [];
   const envExamplePath = path.join(process.cwd(), ".env.example");
   const shopifyConfigPath = path.join(process.cwd(), "shopify.app.toml");
+  const renderConfigPath = path.join(process.cwd(), "render.yaml");
   const publicIndexRoutePath = path.join(
     process.cwd(),
     "app/routes/_index/route.tsx",
@@ -124,6 +125,30 @@ function runStaticChecks() {
     if (shopifyConfig.includes("app_purchases_one_time/update")) {
       failures.push(
         "shopify.app.toml still registers the obsolete one-time purchase webhook.",
+      );
+    }
+  }
+
+  if (!existsSync(renderConfigPath)) {
+    failures.push("render.yaml is missing.");
+  } else {
+    const renderConfig = readFileSync(renderConfigPath, "utf8");
+    if (
+      !/key:\s+SHOPIFY_APP_HANDLE[\s\S]{0,80}value:\s+stocky-escape-kit-1/.test(
+        renderConfig,
+      )
+    ) {
+      failures.push(
+        "render.yaml must set SHOPIFY_APP_HANDLE to stocky-escape-kit-1.",
+      );
+    }
+    if (
+      !/key:\s+SHOPIFY_BILLING_TEST[\s\S]{0,80}value:\s+"false"/.test(
+        renderConfig,
+      )
+    ) {
+      failures.push(
+        'render.yaml must set production SHOPIFY_BILLING_TEST to "false".',
       );
     }
   }
@@ -215,6 +240,22 @@ function runStaticChecks() {
           process.cwd(),
           routePath,
         )} still accepts one-time purchases for review readiness.`,
+      );
+    }
+    if (!source.includes("hasActiveBillingSubscription")) {
+      failures.push(
+        `${path.relative(
+          process.cwd(),
+          routePath,
+        )} must gate merchant actions on allowlisted App Pricing subscriptions.`,
+      );
+    }
+    if (
+      routePath === appRoutePath &&
+      !source.includes("getPlanSelectionUrl(session.shop)")
+    ) {
+      failures.push(
+        "app/routes/app._index.tsx must redirect unpaid merchants to Shopify's hosted pricing page.",
       );
     }
   }

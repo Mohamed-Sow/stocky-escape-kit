@@ -67,11 +67,13 @@ export function isBillingTestMode() {
 }
 
 export function getActiveBillingName(check: BillingCheckResponseObject) {
-  return getActiveBillingSubscription(check)?.name ?? null;
+  return hasActiveBillingSubscription(check)
+    ? getActiveBillingSubscription(check)?.name ?? null
+    : null;
 }
 
 export function hasActiveBillingSubscription(check: BillingCheckResponseObject) {
-  return getActiveBillingSubscription(check) !== null;
+  return check.hasActivePayment && getActiveBillingSubscription(check) !== null;
 }
 
 export function getPlanSelectionUrl(shop: string) {
