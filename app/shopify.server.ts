@@ -2,12 +2,10 @@ import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
-  BillingInterval,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { BILLING_PLANS } from "./models/billing.server";
 import { upsertInstalledStore } from "./models/store.server";
 
 const shopify = shopifyApp({
@@ -21,23 +19,6 @@ const shopify = shopifyApp({
   distribution: AppDistribution.AppStore,
   future: {
     expiringOfflineAccessTokens: true,
-  },
-  billing: {
-    [BILLING_PLANS.basic]: {
-      amount: 99,
-      currencyCode: "USD",
-      interval: BillingInterval.OneTime,
-    },
-    [BILLING_PLANS.pro]: {
-      amount: 199,
-      currencyCode: "USD",
-      interval: BillingInterval.OneTime,
-    },
-    [BILLING_PLANS.plus]: {
-      amount: 299,
-      currencyCode: "USD",
-      interval: BillingInterval.OneTime,
-    },
   },
   hooks: {
     afterAuth: async ({ session }) => {

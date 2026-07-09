@@ -21,7 +21,7 @@ This app should not become full inventory management software in v1.
 ## Implemented App Flow
 
 - OAuth install/linking uses the official Shopify React Router app package and Prisma session storage.
-- Billing uses one-time Shopify Billing API purchases for Basic, Pro, and Plus plans.
+- Billing uses Shopify App Pricing subscriptions. Public plans are `Stocky Escape Kit Basic` at `$99/mo`, `Stocky Escape Kit Pro` at `$199/mo`, and `Stocky Escape Kit Plus` at `$299/mo`.
 - CSV uploads accept Stocky export files, detect report type, persist raw CSV bytes and parsed rows, preserve unknown columns in row payloads, and record row-level warnings.
 - Catalog sync uses the Shopify GraphQL Admin API with `read_products`, `read_inventory`, and `read_locations`.
 - Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog.
@@ -29,11 +29,19 @@ This app should not become full inventory management software in v1.
 
 ## Environment
 
+`SHOPIFY_APP_HANDLE` is required for Shopify's hosted App Pricing redirect and should be `stocky-escape-kit-1` for the current app.
 `SHOPIFY_BILLING_TEST` defaults to test mode outside production unless set to `false`.
+Set `SHOPIFY_BILLING_TEST=false` for production merchant installs.
 `SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per sync request.
 `SHOPIFY_TEST_SHOP` is used only by the live Shopify smoke test.
 `SHOPIFY_ADMIN_ACCESS_TOKEN` is optional and lets the live smoke test call
 Shopify directly when no local Prisma session is available.
+
+Partner Dashboard App Pricing must be configured before review:
+
+- Public monthly plans: `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, `Stocky Escape Kit Plus`.
+- Private `$0` review/dev plan: `Stocky Escape Kit Review Test`. This plan is accepted by smoke tests but must not be shown as public marketing.
+- Welcome/return links should route back to `/app`.
 
 ## Verification
 
@@ -55,15 +63,17 @@ npm run dev
 npm run smoke:shopify
 ```
 
-The live smoke test loads `.env`, finds the offline session for `SHOPIFY_TEST_SHOP`
-in Prisma or uses `SHOPIFY_ADMIN_ACCESS_TOKEN`, calls the Shopify GraphQL Admin
-API, and verifies granted scopes, active Stocky Escape Kit billing, product
-query access, and location query access. It does not print access tokens.
+The live smoke test loads `.env`, finds the offline session for
+`SHOPIFY_TEST_SHOP` in Prisma or uses `SHOPIFY_ADMIN_ACCESS_TOKEN`, calls the
+Shopify GraphQL Admin API, and verifies granted scopes, an active accepted
+Stocky Escape Kit App Pricing subscription, product query access, and location
+query access. It does not print access tokens.
 
 If live smoke fails before contacting Shopify, set `DATABASE_URL` and
 `SHOPIFY_TEST_SHOP` in `.env` after installing the app, or set
 `SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct GraphQL proof.
-Approve a test billing plan before rerunning `npm run smoke:shopify`.
+Select the private `Stocky Escape Kit Review Test` plan in the dev/review store
+before rerunning `npm run smoke:shopify`.
 
 ## Production Hosting
 
@@ -73,11 +83,11 @@ Postgres `basic-1gb`.
 
 See `docs/render-deployment.md` before creating or updating Render services.
 
-## Suggested Pricing
+## Public Pricing
 
-- Basic: `$99` migration archive and audit.
-- Pro: `$199` larger files, supplier reconstruction, all exports.
-- Plus: `$299` multi-location reports and priority migration checklist.
+- `Stocky Escape Kit Basic`: `$99/mo` migration archive and audit.
+- `Stocky Escape Kit Pro`: `$199/mo` larger files, supplier reconstruction, all exports.
+- `Stocky Escape Kit Plus`: `$299/mo` multi-location reports and priority migration checklist.
 
 ## Implementation Entry Point
 

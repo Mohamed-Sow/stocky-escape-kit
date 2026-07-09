@@ -19,6 +19,8 @@ services:
         sync: false
       - key: SHOPIFY_APP_URL
         sync: false
+      - key: SHOPIFY_APP_HANDLE
+        value: stocky-escape-kit-1
       - key: SCOPES
         value: read_products,read_inventory,read_locations
       - key: SHOPIFY_BILLING_TEST

@@ -2,7 +2,7 @@ import { ExportType } from "@prisma/client";
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
-  BILLING_PLAN_NAMES,
+  hasActiveBillingSubscription,
   isBillingTestMode,
   updateStoreBillingStatus,
 } from "../models/billing.server";
@@ -15,20 +15,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     shop: session.shop,
     scopes: session.scope ?? null,
   });
-  const billingCheck = await billing.check({
-    plans: BILLING_PLAN_NAMES,
-    isTest: isBillingTestMode(),
-  });
+  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
 
   await updateStoreBillingStatus({
     shop: session.shop,
     billingCheck,
   });
 
-  if (!billingCheck.hasActivePayment) {
-    throw new Response("Billing is required before exporting reports.", {
-      status: 402,
-    });
+  if (!hasActiveBillingSubscription(billingCheck)) {
+    throw new Response(
+      "A Stocky Escape Kit App Pricing subscription is required before exporting reports.",
+      {
+        status: 402,
+      },
+    );
   }
 
   const exportType = params.type;

@@ -9,8 +9,8 @@ const BILLING_PLAN_NAMES = [
   "Stocky Escape Kit Basic",
   "Stocky Escape Kit Pro",
   "Stocky Escape Kit Plus",
+  "Stocky Escape Kit Review Test",
 ];
-const BILLING_WEBHOOK_TOPIC = "app_purchases_one_time/update";
 
 const mode = process.argv.includes("--static") ? "static" : "live";
 
@@ -52,6 +52,16 @@ function runStaticChecks() {
     process.cwd(),
     "scripts/check-build-output.mjs",
   );
+  const appRoutePath = path.join(process.cwd(), "app/routes/app._index.tsx");
+  const exportRoutePath = path.join(
+    process.cwd(),
+    "app/routes/app.exports.$type.tsx",
+  );
+  const shopifyServerPath = path.join(process.cwd(), "app/shopify.server.ts");
+  const oneTimePurchaseWebhookPath = path.join(
+    process.cwd(),
+    "app/routes/webhooks.app_purchases_one_time.update.tsx",
+  );
   const prismaSchemaCheckPath = path.join(
     process.cwd(),
     "scripts/check-prisma-schema.mjs",
@@ -66,6 +76,7 @@ function runStaticChecks() {
       "SHOPIFY_API_KEY",
       "SHOPIFY_API_SECRET",
       "SHOPIFY_APP_URL",
+      "SHOPIFY_APP_HANDLE",
       "SHOPIFY_BILLING_TEST",
       "SHOPIFY_SYNC_VARIANT_LIMIT",
       "SHOPIFY_TEST_SHOP",
@@ -110,9 +121,9 @@ function runStaticChecks() {
       }
     }
 
-    if (!shopifyConfig.includes(BILLING_WEBHOOK_TOPIC)) {
+    if (shopifyConfig.includes("app_purchases_one_time/update")) {
       failures.push(
-        `shopify.app.toml is missing ${BILLING_WEBHOOK_TOPIC} webhook registration.`,
+        "shopify.app.toml still registers the obsolete one-time purchase webhook.",
       );
     }
   }
@@ -160,6 +171,52 @@ function runStaticChecks() {
 
   if (!existsSync(buildOutputCheckPath)) {
     failures.push("scripts/check-build-output.mjs is missing.");
+  }
+
+  if (existsSync(oneTimePurchaseWebhookPath)) {
+    failures.push(
+      "Obsolete one-time purchase webhook route still exists; Shopify App Pricing should not depend on it.",
+    );
+  }
+
+  if (!existsSync(shopifyServerPath)) {
+    failures.push("app/shopify.server.ts is missing.");
+  } else {
+    const shopifyServer = readFileSync(shopifyServerPath, "utf8");
+    if (
+      shopifyServer.includes("BillingInterval") ||
+      shopifyServer.includes("OneTime") ||
+      /billing\s*:/.test(shopifyServer)
+    ) {
+      failures.push(
+        "app/shopify.server.ts still configures Billing API charges instead of Shopify App Pricing.",
+      );
+    }
+  }
+
+  for (const routePath of [appRoutePath, exportRoutePath]) {
+    if (!existsSync(routePath)) {
+      failures.push(`${path.relative(process.cwd(), routePath)} is missing.`);
+      continue;
+    }
+
+    const source = readFileSync(routePath, "utf8");
+    if (source.includes("billing.request")) {
+      failures.push(
+        `${path.relative(
+          process.cwd(),
+          routePath,
+        )} still creates in-app Billing API charges.`,
+      );
+    }
+    if (source.includes("oneTimePurchases")) {
+      failures.push(
+        `${path.relative(
+          process.cwd(),
+          routePath,
+        )} still accepts one-time purchases for review readiness.`,
+      );
+    }
   }
 
   if (!existsSync(prismaSchemaCheckPath)) {
@@ -310,7 +367,7 @@ async function verifyHostedSmokeEndpoint({ endpointUrl, shop, smokeToken }) {
 
   if (!BILLING_PLAN_NAMES.includes(payload.billingName)) {
     failures.push(
-      `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
+      `No active Stocky Escape Kit App Pricing subscription was found for ${shop}.`,
     );
   }
 
@@ -368,22 +425,15 @@ async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
     );
   }
 
-  const activeOneTimePurchase = installation?.oneTimePurchases.edges
-    .map((edge) => edge.node)
-    .find(
-      (purchase) =>
-        purchase.status === "ACTIVE" &&
-        BILLING_PLAN_NAMES.includes(purchase.name),
-    );
   const activeSubscription = installation?.activeSubscriptions.find(
     (subscription) =>
       subscription.status === "ACTIVE" &&
       BILLING_PLAN_NAMES.includes(subscription.name),
   );
 
-  if (!activeOneTimePurchase && !activeSubscription) {
+  if (!activeSubscription) {
     failures.push(
-      `No active Stocky Escape Kit billing purchase was found for ${shop}.`,
+      `No active Stocky Escape Kit App Pricing subscription was found for ${shop}.`,
     );
   }
 
@@ -400,8 +450,7 @@ async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
       shop,
       tokenSource,
       grantedScopes,
-      billingName:
-        activeOneTimePurchase?.name ?? activeSubscription?.name ?? "",
+      billingName: activeSubscription?.name ?? "",
       productSamples: payload.data.products.edges.length,
       locationSamples: payload.data.locations.edges.length,
     });
@@ -430,15 +479,6 @@ async function adminGraphql({ shop, accessToken }) {
                 name
                 status
                 test
-              }
-              oneTimePurchases(first: 20) {
-                edges {
-                  node {
-                    name
-                    status
-                    test
-                  }
-                }
               }
             }
             products(first: 1) {

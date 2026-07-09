@@ -26,6 +26,7 @@ This app is prepared for a low-maintenance Render production setup:
    - `SHOPIFY_API_KEY`: the app client ID from Shopify.
    - `SHOPIFY_API_SECRET`: the app client secret from Shopify.
    - `SHOPIFY_APP_URL`: the final Render HTTPS URL, for example `https://stocky-escape-kit.onrender.com`.
+   - `SHOPIFY_APP_HANDLE`: `stocky-escape-kit-1`.
 5. Keep `DATABASE_URL` sourced from the Blueprint database reference. Do not paste a local database URL.
 
 ## Shopify production URL setup
@@ -52,10 +53,18 @@ npm run risk:audit
 SHOPIFY_TEST_SHOP=stocky-escape-kit-partner-dev.myshopify.com npm run smoke:shopify
 ```
 
-For the live smoke, set `DATABASE_URL` to the Render database connection string if running it from your machine against the production install. The smoke test must prove:
+Before the live smoke, configure Shopify App Pricing in the Partner Dashboard:
+
+- Public monthly plans: `Stocky Escape Kit Basic` (`$99/mo`), `Stocky Escape Kit Pro` (`$199/mo`), and `Stocky Escape Kit Plus` (`$299/mo`).
+- Private `$0` review/dev plan: `Stocky Escape Kit Review Test`.
+- Welcome links should return reviewers to `/app`.
+
+For the live smoke, select the private review/dev plan in the dev store, then
+set `DATABASE_URL` to the Render database connection string if running it from
+your machine against the production install. The smoke test must prove:
 
 - OAuth created or reused a Prisma offline session.
-- Billing is active for a Stocky Escape Kit plan.
+- Billing is active for an accepted Stocky Escape Kit App Pricing subscription.
 - Granted scopes are exactly read-only: `read_products`, `read_inventory`, `read_locations`.
 - Products and locations GraphQL queries succeed.
 
@@ -73,6 +82,6 @@ npm run smoke:shopify
 ## Submission readiness notes
 
 - Keep `SHOPIFY_BILLING_TEST=false` for production merchant installs.
-- Use Shopify test billing only in development or review-proof contexts where Shopify permits it.
+- Use the private `Stocky Escape Kit Review Test` plan only in development or review-proof contexts where Shopify permits it.
 - Do not use a temporary Cloudflare tunnel URL in production app settings.
 - Do not claim the app imports historical Stocky purchase orders into Shopify.

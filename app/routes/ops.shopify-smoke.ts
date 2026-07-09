@@ -68,22 +68,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const missingScopes = REQUIRED_SCOPES.filter(
     (scope) => !grantedScopes.includes(scope),
   );
-  const activeOneTimePurchase = installation?.oneTimePurchases.edges
-    .map((edge) => edge.node)
-    .find(
-      (purchase) =>
-        purchase.status === "ACTIVE" &&
-        (BILLING_PLAN_NAMES as readonly string[]).includes(purchase.name),
-    );
   const activeSubscription = installation?.activeSubscriptions.find(
     (subscription) =>
       subscription.status === "ACTIVE" &&
       (BILLING_PLAN_NAMES as readonly string[]).includes(subscription.name),
   );
+  const billingName = activeSubscription?.name ?? null;
   const failures = [
     ...missingScopes.map((scope) => `Missing scope: ${scope}`),
-    !activeOneTimePurchase && !activeSubscription
-      ? "No active Stocky Escape Kit billing purchase was found."
+    !billingName
+      ? "No active Stocky Escape Kit App Pricing subscription was found."
       : null,
     !payload.data?.products ? "Products query returned no connection." : null,
     !payload.data?.locations ? "Locations query returned no connection." : null,
@@ -94,7 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ok: failures.length === 0,
       shop,
       tokenSource: "Prisma offline session",
-      billingName: activeOneTimePurchase?.name ?? activeSubscription?.name ?? null,
+      billingName,
       grantedScopes,
       productSamples: payload.data?.products?.edges.length ?? 0,
       locationSamples: payload.data?.locations?.edges.length ?? 0,
@@ -129,14 +123,6 @@ async function adminGraphql({
               activeSubscriptions {
                 name
                 status
-              }
-              oneTimePurchases(first: 20) {
-                edges {
-                  node {
-                    name
-                    status
-                  }
-                }
               }
             }
             products(first: 1) {
@@ -198,9 +184,6 @@ type SmokePayload = {
     currentAppInstallation?: {
       accessScopes: Array<{ handle: string }>;
       activeSubscriptions: Array<{ name: string; status: string }>;
-      oneTimePurchases: {
-        edges: Array<{ node: { name: string; status: string } }>;
-      };
     };
     products?: { edges: Array<{ node: { id: string } }> };
     locations?: { edges: Array<{ node: { id: string } }> };

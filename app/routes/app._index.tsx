@@ -13,10 +13,10 @@ import { syncShopifyCatalog } from "../lib/catalog.server";
 import { importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
-  BILLING_PLAN_NAMES,
   getActiveBillingName,
+  getPlanSelectionUrl,
+  hasActiveBillingSubscription,
   isBillingTestMode,
-  isValidBillingPlan,
   updateStoreBillingStatus,
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
@@ -34,20 +34,24 @@ const EXPORT_LABELS: Record<ExportType, string> = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing, session } = await authenticate.admin(request);
+  const { billing, redirect, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,
     scopes: session.scope ?? null,
   });
-  const billingCheck = await billing.check({
-    plans: BILLING_PLAN_NAMES,
-    isTest: isBillingTestMode(),
-  });
+  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
 
   const billingStatus = await updateStoreBillingStatus({
     shop: session.shop,
     billingCheck,
   });
+  const billingActive = hasActiveBillingSubscription(billingCheck);
+
+  if (!billingActive) {
+    return redirect(getPlanSelectionUrl(session.shop), {
+      target: "_top",
+    });
+  }
 
   const [latestBatch, latestSnapshot, exportJobs] = await Promise.all([
     db.uploadBatch.findFirst({
@@ -101,7 +105,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shop: session.shop,
     scopes: session.scope ?? "read_products,read_inventory,read_locations",
     billing: {
-      active: billingCheck.hasActivePayment,
+      active: billingActive,
       status: billingStatus,
       activePlan: getActiveBillingName(billingCheck),
       testMode: isBillingTestMode(),
@@ -174,8 +178,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({
   request,
-}: ActionFunctionArgs): Promise<ActionData | null> => {
-  const { admin, billing, session } = await authenticate.admin(request);
+}: ActionFunctionArgs): Promise<ActionData | Response | null> => {
+  const { admin, billing, redirect, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,
     scopes: session.scope ?? null,
@@ -184,39 +188,23 @@ export const action = async ({
   const intent = formData.get("intent");
 
   if (intent === "select_plan") {
-    const plan = formData.get("plan");
-
-    if (!isValidBillingPlan(plan)) {
-      return {
-        status: "error",
-        message: "Unknown billing plan.",
-      };
-    }
-
-    await billing.request({
-      plan,
-      isTest: isBillingTestMode(),
-      returnUrl: new URL("/app", request.url).toString(),
+    return redirect(getPlanSelectionUrl(session.shop), {
+      target: "_top",
     });
-
-    return null;
   }
 
-  const billingCheck = await billing.check({
-    plans: BILLING_PLAN_NAMES,
-    isTest: isBillingTestMode(),
-  });
+  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
 
   await updateStoreBillingStatus({
     shop: session.shop,
     billingCheck,
   });
 
-  if (!billingCheck.hasActivePayment) {
+  if (!hasActiveBillingSubscription(billingCheck)) {
     return {
       status: "error",
       message:
-        "Choose a Shopify billing plan before uploading CSVs, syncing Shopify, or exporting reports.",
+        "Choose a Stocky Escape Kit App Pricing subscription before uploading CSVs, syncing Shopify, or exporting reports.",
     };
   }
 
@@ -319,14 +307,11 @@ export default function Index() {
         {!data.billing.active ? (
           <div style={gridStyle}>
             {data.billingPlans.map((plan) => (
-              <Form method="post" key={plan.id} style={panelStyle}>
-                <input type="hidden" name="intent" value="select_plan" />
-                <input type="hidden" name="plan" value={plan.name} />
+              <div key={plan.id} style={panelStyle}>
                 <h3 style={headingStyle}>{plan.name}</h3>
                 <p style={priceStyle}>{plan.price}</p>
                 <p>{plan.summary}</p>
-                <s-button type="submit">Choose plan</s-button>
-              </Form>
+              </div>
             ))}
           </div>
         ) : null}

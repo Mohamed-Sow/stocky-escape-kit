@@ -22,7 +22,10 @@ import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
 import {
   BILLING_PLAN_NAMES,
+  PRIVATE_TEST_BILLING_PLAN,
+  getPlanSelectionUrl,
   getActiveBillingName,
+  hasActiveBillingSubscription,
   isBillingTestMode,
   isValidBillingPlan,
 } from "../app/models/billing.server";
@@ -187,12 +190,48 @@ test("catalog summary reader rejects invalid payloads and accepts variant arrays
   assert.deepEqual(readCatalogSummary(summary), summary);
 });
 
-test("billing helpers validate configured plan names and active purchase names", () => {
-  assert.equal(BILLING_PLAN_NAMES.length, 3);
+test("billing helpers validate configured App Pricing subscription names", () => {
+  assert.equal(BILLING_PLAN_NAMES.length, 4);
   assert.equal(isValidBillingPlan("Stocky Escape Kit Pro"), true);
+  assert.equal(isValidBillingPlan(PRIVATE_TEST_BILLING_PLAN), true);
   assert.equal(isValidBillingPlan("Other Plan"), false);
+
+  const activeSubscription = {
+    id: "gid://shopify/AppSubscription/1",
+    name: "Stocky Escape Kit Basic",
+    status: "ACTIVE" as const,
+    test: false,
+    trialDays: 0,
+    createdAt: "2026-07-08T00:00:00Z",
+    currentPeriodEnd: "2026-08-08T00:00:00Z",
+    returnUrl: "https://stocky-escape-kit.onrender.com/app",
+    lineItems: [],
+  };
+
   assert.equal(
     getActiveBillingName({
+      hasActivePayment: true,
+      oneTimePurchases: [],
+      appSubscriptions: [activeSubscription],
+    }),
+    "Stocky Escape Kit Basic",
+  );
+  assert.equal(
+    hasActiveBillingSubscription({
+      hasActivePayment: true,
+      oneTimePurchases: [],
+      appSubscriptions: [
+        {
+          ...activeSubscription,
+          name: PRIVATE_TEST_BILLING_PLAN,
+          test: true,
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    hasActiveBillingSubscription({
       hasActivePayment: true,
       oneTimePurchases: [
         {
@@ -204,8 +243,36 @@ test("billing helpers validate configured plan names and active purchase names",
       ],
       appSubscriptions: [],
     }),
-    "Stocky Escape Kit Basic",
+    false,
   );
+  assert.equal(
+    hasActiveBillingSubscription({
+      hasActivePayment: true,
+      oneTimePurchases: [],
+      appSubscriptions: [
+        {
+          ...activeSubscription,
+          name: "Another App Subscription",
+        },
+      ],
+    }),
+    false,
+  );
+
+  const originalAppHandle = process.env.SHOPIFY_APP_HANDLE;
+  try {
+    delete process.env.SHOPIFY_APP_HANDLE;
+    assert.equal(
+      getPlanSelectionUrl("stocky-escape-kit-partner-dev.myshopify.com"),
+      "https://admin.shopify.com/store/stocky-escape-kit-partner-dev/charges/stocky-escape-kit-1/pricing_plans",
+    );
+  } finally {
+    if (originalAppHandle === undefined) {
+      delete process.env.SHOPIFY_APP_HANDLE;
+    } else {
+      process.env.SHOPIFY_APP_HANDLE = originalAppHandle;
+    }
+  }
 });
 
 test("billing test mode defaults safely outside production", () => {
