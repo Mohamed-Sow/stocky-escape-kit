@@ -6,6 +6,10 @@ import path from "node:path";
 const API_VERSION = "2026-07";
 const REQUIRED_SCOPES = ["read_products", "read_inventory", "read_locations"];
 const BILLING_PLAN_NAMES = [
+  "Stocky Basic",
+  "Stocky Pro",
+  "Stocky Plus",
+  "shopify-test",
   "Stocky Escape Kit Basic",
   "Stocky Escape Kit Pro",
   "Stocky Escape Kit Plus",

@@ -8,14 +8,26 @@ export const PUBLIC_BILLING_PLANS = {
   plus: "Stocky Escape Kit Plus",
 } as const;
 
-export const PRIVATE_TEST_BILLING_PLAN = "Stocky Escape Kit Review Test";
+export const PUBLIC_BILLING_PLAN_INVOICE_NAMES = {
+  basic: "Stocky Basic",
+  pro: "Stocky Pro",
+  plus: "Stocky Plus",
+} as const;
+
+export const PRIVATE_TEST_BILLING_PLAN = "shopify-test";
+export const PRIVATE_TEST_BILLING_DISPLAY_NAME =
+  "Stocky Escape Kit Review Test";
 export const DEFAULT_SHOPIFY_APP_HANDLE = "stocky-escape-kit-1";
 
 export type PublicBillingPlanName =
   (typeof PUBLIC_BILLING_PLANS)[keyof typeof PUBLIC_BILLING_PLANS];
+export type PublicBillingPlanInvoiceName =
+  (typeof PUBLIC_BILLING_PLAN_INVOICE_NAMES)[keyof typeof PUBLIC_BILLING_PLAN_INVOICE_NAMES];
 export type BillingPlanName =
   | PublicBillingPlanName
-  | typeof PRIVATE_TEST_BILLING_PLAN;
+  | PublicBillingPlanInvoiceName
+  | typeof PRIVATE_TEST_BILLING_PLAN
+  | typeof PRIVATE_TEST_BILLING_DISPLAY_NAME;
 
 export const BILLING_PLAN_DETAILS = [
   {
@@ -42,9 +54,15 @@ export const PUBLIC_BILLING_PLAN_NAMES = Object.values(
   PUBLIC_BILLING_PLANS,
 ) as PublicBillingPlanName[];
 
+export const PUBLIC_BILLING_PLAN_INVOICE_NAME_VALUES = Object.values(
+  PUBLIC_BILLING_PLAN_INVOICE_NAMES,
+) as PublicBillingPlanInvoiceName[];
+
 export const BILLING_PLAN_NAMES: BillingPlanName[] = [
   ...PUBLIC_BILLING_PLAN_NAMES,
+  ...PUBLIC_BILLING_PLAN_INVOICE_NAME_VALUES,
   PRIVATE_TEST_BILLING_PLAN,
+  PRIVATE_TEST_BILLING_DISPLAY_NAME,
 ];
 
 export function isValidBillingPlan(plan: unknown): plan is BillingPlanName {

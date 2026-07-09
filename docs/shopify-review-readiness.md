@@ -18,9 +18,10 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 ## Billing setup
 
 - [ ] Shopify App Pricing is enabled.
-- [ ] Public monthly plans are named exactly `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
+- [ ] Public monthly invoice plans are named exactly `Stocky Basic`, `Stocky Pro`, and `Stocky Plus`.
+- [ ] Public listing display names are `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
 - [ ] Public prices are `$99/mo`, `$199/mo`, and `$299/mo`.
-- [ ] Private `$0` review/dev plan is named exactly `Stocky Escape Kit Review Test`.
+- [ ] Private `$0` review/dev plan uses Shopify's reserved `shopify-test` plan and is labeled `Stocky Escape Kit Review Test` wherever listing descriptions allow.
 - [ ] Private review/dev plan is not described as public marketing.
 - [ ] Welcome links return reviewers to `/app`.
 - [ ] Production env has `SHOPIFY_APP_HANDLE=stocky-escape-kit-1` and `SHOPIFY_BILLING_TEST=false`.
@@ -28,7 +29,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 ## Reviewer flow
 
 1. Install the app on the provided review/dev store.
-2. Select the private `Stocky Escape Kit Review Test` plan from Shopify's hosted pricing page.
+2. Select the private `$0` review/dev plan from Shopify's hosted pricing page.
 3. Open the embedded app and confirm billing shows the review test plan.
 4. Upload CSV fixtures from `fixtures/stocky`, starting with `stocky-purchase-orders.csv`, `stocky-stocktakes.csv`, `stocky-historical-costs.csv`, and `stocky-vendors.csv`.
 5. Confirm parsed files show row counts, warnings, and raw CSV download links.

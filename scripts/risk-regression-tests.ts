@@ -22,6 +22,7 @@ import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
 import {
   BILLING_PLAN_NAMES,
+  PRIVATE_TEST_BILLING_DISPLAY_NAME,
   PRIVATE_TEST_BILLING_PLAN,
   getPlanSelectionUrl,
   getActiveBillingName,
@@ -191,14 +192,16 @@ test("catalog summary reader rejects invalid payloads and accepts variant arrays
 });
 
 test("billing helpers validate configured App Pricing subscription names", () => {
-  assert.equal(BILLING_PLAN_NAMES.length, 4);
+  assert.equal(BILLING_PLAN_NAMES.length, 8);
+  assert.equal(isValidBillingPlan("Stocky Pro"), true);
   assert.equal(isValidBillingPlan("Stocky Escape Kit Pro"), true);
   assert.equal(isValidBillingPlan(PRIVATE_TEST_BILLING_PLAN), true);
+  assert.equal(isValidBillingPlan(PRIVATE_TEST_BILLING_DISPLAY_NAME), true);
   assert.equal(isValidBillingPlan("Other Plan"), false);
 
   const activeSubscription = {
     id: "gid://shopify/AppSubscription/1",
-    name: "Stocky Escape Kit Basic",
+    name: "Stocky Basic",
     status: "ACTIVE" as const,
     test: false,
     trialDays: 0,
@@ -214,7 +217,7 @@ test("billing helpers validate configured App Pricing subscription names", () =>
       oneTimePurchases: [],
       appSubscriptions: [activeSubscription],
     }),
-    "Stocky Escape Kit Basic",
+    "Stocky Basic",
   );
   assert.equal(
     hasActiveBillingSubscription({
