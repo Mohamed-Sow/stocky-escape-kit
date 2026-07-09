@@ -123,6 +123,9 @@ async function buildArchiveCsv(storeId: string) {
   return toCsv([
     [
       "file",
+      "file_sha256",
+      "raw_storage_pointer",
+      "raw_byte_length",
       "report_type",
       "source_row",
       "sku",
@@ -135,6 +138,9 @@ async function buildArchiveCsv(storeId: string) {
 
       return [
         record.uploadedFile.originalFilename,
+        record.uploadedFile.contentSha256 ?? "",
+        record.uploadedFile.storagePointer,
+        String(record.uploadedFile.rawContentByteLength ?? ""),
         record.normalizedType,
         String(record.sourceRowNumber),
         record.sku ?? "",

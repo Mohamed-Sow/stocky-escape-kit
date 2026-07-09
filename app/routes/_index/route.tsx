@@ -19,14 +19,13 @@ export default function App() {
       <div className={styles.content}>
         <h1 className={styles.heading}>Stocky Escape Kit</h1>
         <p className={styles.text}>
-          Parse Stocky exports, find what will not migrate cleanly, and get a
-          clear action list before Stocky shuts down.
+          Back up Stocky CSV exports, find what will not migrate cleanly, and
+          get a clear action list before Stocky shuts down.
         </p>
         <ul className={styles.list}>
           <li>
-            <strong>Parsed archive</strong>. Preserve normalized Stocky rows,
-            unknown columns, file hashes, and import metadata for migration
-            reference.
+            <strong>Raw archive</strong>. Preserve original Stocky CSV uploads,
+            normalized rows, unknown columns, file hashes, and import metadata.
           </li>
           <li>
             <strong>Audit gaps</strong>. Match Stocky rows to Shopify SKUs,

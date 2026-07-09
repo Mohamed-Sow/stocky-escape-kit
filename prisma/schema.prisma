@@ -69,18 +69,20 @@ model UploadBatch {
 }
 
 model UploadedFile {
-  id                 String           @id @default(cuid())
-  batchId            String
-  originalFilename   String
-  detectedReportType StockyReportType @default(UNKNOWN)
-  parseStatus        FileParseStatus  @default(PENDING)
-  storagePointer     String
-  contentSha256      String?
-  rowCount           Int              @default(0)
-  warningCount       Int              @default(0)
-  errorMessage       String?
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  id                   String           @id @default(cuid())
+  batchId              String
+  originalFilename     String
+  detectedReportType   StockyReportType @default(UNKNOWN)
+  parseStatus          FileParseStatus  @default(PENDING)
+  storagePointer       String
+  contentSha256        String?
+  rawContentBase64     String?
+  rawContentByteLength Int?
+  rowCount             Int              @default(0)
+  warningCount         Int              @default(0)
+  errorMessage         String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   batch         UploadBatch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
   parsedRecords ParsedRecord[]

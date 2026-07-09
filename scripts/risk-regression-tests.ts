@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -478,6 +479,30 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(fakeDb.state.uploadedFiles.length, fixtureFilenames.length);
     assert.equal(fakeDb.state.parsedRecords.length, expectedImportedRows);
 
+    const edgeCaseContent = readStockyFixture("stocky-products-edge-cases.csv");
+    const edgeCaseFile = fakeDb.state.uploadedFiles.find(
+      (file) => file.originalFilename === "stocky-products-edge-cases.csv",
+    );
+    assert.ok(edgeCaseFile);
+    assert.equal(
+      Buffer.from(edgeCaseFile.rawContentBase64 ?? "", "base64").toString(
+        "utf8",
+      ),
+      edgeCaseContent,
+    );
+    assert.equal(
+      edgeCaseFile.rawContentByteLength,
+      Buffer.byteLength(edgeCaseContent),
+    );
+    assert.equal(
+      edgeCaseFile.contentSha256,
+      createHash("sha256").update(Buffer.from(edgeCaseContent)).digest("hex"),
+    );
+    assert.equal(
+      edgeCaseFile.storagePointer,
+      `db:uploaded_file.rawContentBase64:sha256:${edgeCaseFile.contentSha256}`,
+    );
+
     const failedFile = fakeDb.state.uploadedFiles.find(
       (file) => file.originalFilename === "stocky-malformed-unclosed-quote.csv",
     );
@@ -580,9 +605,10 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     });
     assert.ok(
       archive.body.startsWith(
-        "file,report_type,source_row,sku,normalized_json,raw_json,warnings",
+        "file,file_sha256,raw_storage_pointer,raw_byte_length,report_type,source_row,sku,normalized_json,raw_json,warnings",
       ),
     );
+    assert.match(archive.body, /db:uploaded_file\.rawContentBase64:sha256:/);
     assert.match(archive.body, /stocky-po-proprietary-semicolon.csv/);
     assert.match(archive.body, /Internal Code #2/);
 
@@ -701,6 +727,8 @@ type UploadedFileRow = {
   parseStatus: FileParseStatus;
   storagePointer: string;
   contentSha256: string | null;
+  rawContentBase64: string | null;
+  rawContentByteLength: number | null;
   rowCount: number;
   warningCount: number;
   errorMessage: string | null;
@@ -814,6 +842,8 @@ type UploadedFileCreateArgs = {
     parseStatus: FileParseStatus;
     storagePointer: string;
     contentSha256?: string;
+    rawContentBase64?: string | null;
+    rawContentByteLength?: number | null;
     rowCount?: number;
     warningCount?: number;
     errorMessage?: string | null;
@@ -1040,6 +1070,8 @@ function installInMemoryPrisma() {
         parseStatus: data.parseStatus,
         storagePointer: data.storagePointer,
         contentSha256: data.contentSha256 ?? null,
+        rawContentBase64: data.rawContentBase64 ?? null,
+        rawContentByteLength: data.rawContentByteLength ?? null,
         rowCount: data.rowCount ?? 0,
         warningCount: data.warningCount ?? 0,
         errorMessage: data.errorMessage ?? null,

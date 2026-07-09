@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import {
   FileParseStatus,
   StockyReportType,
@@ -56,8 +57,11 @@ export async function importStockyCsvFiles({
       continue;
     }
 
-    const content = await file.text();
-    const contentSha256 = createHash("sha256").update(content).digest("hex");
+    const rawContent = Buffer.from(await file.arrayBuffer());
+    const content = rawContent.toString("utf8");
+    const contentSha256 = createHash("sha256")
+      .update(rawContent)
+      .digest("hex");
     const parsed = parseStockyCsv({
       filename: file.name || "stocky-export.csv",
       content,
@@ -78,8 +82,10 @@ export async function importStockyCsvFiles({
         originalFilename: file.name || "stocky-export.csv",
         detectedReportType: parsed.reportType,
         parseStatus: failed ? FileParseStatus.FAILED : FileParseStatus.PARSED,
-        storagePointer: `sha256:${contentSha256}`,
+        storagePointer: `db:uploaded_file.rawContentBase64:sha256:${contentSha256}`,
         contentSha256,
+        rawContentBase64: rawContent.toString("base64"),
+        rawContentByteLength: rawContent.byteLength,
         rowCount: failed ? 0 : parsed.rowCount,
         warningCount: parsed.warningCount,
         errorMessage: failed ? parsed.parseErrors.join("; ") : null,

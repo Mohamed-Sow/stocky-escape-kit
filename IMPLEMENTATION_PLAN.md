@@ -2,7 +2,7 @@
 
 ## Summary
 
-Build a Shopify-only public app that helps merchants preserve parsed Stocky export rows and metadata and prepare inventory workflows before Stocky stops working. Prioritize fast App Store submission, CSV reliability, and truthful migration guidance.
+Build a Shopify-only public app that helps merchants preserve raw Stocky CSV exports, parsed rows, and metadata and prepare inventory workflows before Stocky stops working. Prioritize fast App Store submission, CSV reliability, and truthful migration guidance.
 
 ## Key Changes
 
@@ -18,7 +18,7 @@ Build a Shopify-only public app that helps merchants preserve parsed Stocky expo
 
 - `Store`: shop domain, install status, scopes, billing status.
 - `UploadBatch`: store, status, file count, imported row count, warning count.
-- `UploadedFile`: batch, original filename, detected report type, parse status, storage pointer.
+- `UploadedFile`: batch, original filename, detected report type, parse status, raw CSV storage pointer, content hash, raw content bytes, parse metadata.
 - `ParsedRecord`: file, normalized type, source row number, normalized payload, warnings.
 - `ShopifyCatalogSnapshot`: store, sync status, product/variant/inventory summary.
 - `AuditFinding`: store, batch, severity, category, SKU, title, message, recommended action.
@@ -56,4 +56,4 @@ Build a Shopify-only public app that helps merchants preserve parsed Stocky expo
 - No WooCommerce.
 - No direct historical purchase order import claims.
 - No AI required for v1.
-- Current v1 stores parsed rows, unknown columns, file hashes, and import metadata. Do not claim raw uploaded CSV byte retention unless object storage is added and wired into upload/export flows.
+- Current v1 stores raw uploaded CSV bytes in Postgres as base64, plus file hashes, parsed rows, unknown columns, and import metadata.
