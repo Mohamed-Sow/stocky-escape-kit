@@ -24,7 +24,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 - [ ] Private `$0` review/dev plan uses Shopify's reserved `shopify-test` plan and is labeled `Stocky Escape Kit Review Test` wherever listing descriptions allow.
 - [ ] Private review/dev plan is not described as public marketing.
 - [ ] Welcome links return reviewers to `/app`.
-- [ ] Production env has `SHOPIFY_APP_HANDLE=stocky-escape-kit` and `SHOPIFY_BILLING_TEST=false`.
+- [ ] Production env has `SHOPIFY_APP_HANDLE=stocky-escape-kit-1` and `SHOPIFY_BILLING_TEST=false`.
 - [ ] Production env has `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_TOKEN`, and `SHOPIFY_PARTNER_APP_ID` for Partner API `activeSubscription` billing proof.
 - [ ] Partner API client has Manage apps permission.
 

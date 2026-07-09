@@ -29,7 +29,7 @@ This app should not become full inventory management software in v1.
 
 ## Environment
 
-`SHOPIFY_APP_HANDLE` is required for Shopify's hosted App Pricing redirect and should be `stocky-escape-kit` for the current app.
+`SHOPIFY_APP_HANDLE` is required for Shopify's hosted App Pricing redirect and should be `stocky-escape-kit-1` for the current app.
 `SHOPIFY_BILLING_TEST` defaults to test mode outside production unless set to `false`.
 Set `SHOPIFY_BILLING_TEST=false` for production merchant installs.
 `SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per sync request.

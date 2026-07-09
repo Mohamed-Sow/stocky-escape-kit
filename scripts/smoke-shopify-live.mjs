@@ -136,12 +136,12 @@ function runStaticChecks() {
   } else {
     const renderConfig = readFileSync(renderConfigPath, "utf8");
     if (
-      !/key:\s+SHOPIFY_APP_HANDLE[\s\S]{0,80}value:\s+stocky-escape-kit/.test(
+      !/key:\s+SHOPIFY_APP_HANDLE[\s\S]{0,80}value:\s+stocky-escape-kit-1/.test(
         renderConfig,
       )
     ) {
       failures.push(
-        "render.yaml must set SHOPIFY_APP_HANDLE to stocky-escape-kit.",
+        "render.yaml must set SHOPIFY_APP_HANDLE to stocky-escape-kit-1.",
       );
     }
     if (

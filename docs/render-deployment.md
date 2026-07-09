@@ -26,7 +26,7 @@ This app is prepared for a low-maintenance Render production setup:
    - `SHOPIFY_API_KEY`: the app client ID from Shopify.
    - `SHOPIFY_API_SECRET`: the app client secret from Shopify.
    - `SHOPIFY_APP_URL`: the final Render HTTPS URL, for example `https://stocky-escape-kit.onrender.com`.
-   - `SHOPIFY_APP_HANDLE`: `stocky-escape-kit`.
+   - `SHOPIFY_APP_HANDLE`: `stocky-escape-kit-1`.
    - `SHOPIFY_PARTNER_ORG_ID`: the Partner organization ID that owns the app.
    - `SHOPIFY_PARTNER_API_TOKEN`: a Partner API client token with Manage apps permission.
    - `SHOPIFY_PARTNER_APP_ID`: the app GID used by Partner API `activeSubscription`.
