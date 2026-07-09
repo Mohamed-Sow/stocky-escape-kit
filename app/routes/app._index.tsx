@@ -554,9 +554,9 @@ export default function Index() {
 
       <s-section slot="aside" heading="V1 boundaries">
         <s-paragraph>
-          This app preserves Stocky exports, audits migration gaps, and produces
-          reports. It does not import historical Stocky purchase orders into
-          Shopify.
+          This app preserves parsed Stocky rows and metadata, audits migration
+          gaps, and produces reports. It does not import historical Stocky
+          purchase orders into Shopify.
         </s-paragraph>
         <s-paragraph>
           Shopify access is read-only and uses the Admin GraphQL API.

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Build a Shopify-only public app that helps merchants preserve Stocky exports and prepare inventory workflows before Stocky stops working. Prioritize fast App Store submission, CSV reliability, and truthful migration guidance.
+Build a Shopify-only public app that helps merchants preserve parsed Stocky export rows and metadata and prepare inventory workflows before Stocky stops working. Prioritize fast App Store submission, CSV reliability, and truthful migration guidance.
 
 ## Key Changes
 
@@ -56,4 +56,4 @@ Build a Shopify-only public app that helps merchants preserve Stocky exports and
 - No WooCommerce.
 - No direct historical purchase order import claims.
 - No AI required for v1.
-- Object storage is used for uploaded CSVs and generated exports; database stores normalized rows and metadata.
+- Current v1 stores parsed rows, unknown columns, file hashes, and import metadata. Do not claim raw uploaded CSV byte retention unless object storage is added and wired into upload/export flows.

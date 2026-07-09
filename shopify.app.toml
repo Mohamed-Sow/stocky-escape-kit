@@ -12,7 +12,7 @@ automatically_update_urls_on_dev = true
 scopes = "read_products,read_inventory,read_locations"
 
 [auth]
-redirect_urls = ["https://stocky-escape-kit.onrender.com/api/auth"]
+redirect_urls = ["https://stocky-escape-kit.onrender.com/auth/callback"]
 
 [webhooks]
 api_version = "2026-07"

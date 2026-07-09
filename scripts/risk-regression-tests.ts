@@ -67,6 +67,21 @@ test("CSV parser preserves quoted commas, newlines, and escaped quotes", () => {
   );
 });
 
+test("CSV export neutralizes spreadsheet formula injection values", () => {
+  assert.equal(
+    toCsv([
+      ["sku", "supplier", "quantity", "note"],
+      ["=cmd|' /C calc'!A0", "+SUM(1,2)", "-2", "@hidden"],
+      [" safe", "  =HYPERLINK(\"https://example.com\")", "\t=1+1", "plain"],
+    ]),
+    [
+      "sku,supplier,quantity,note",
+      "'=cmd|' /C calc'!A0,\"'+SUM(1,2)\",'-2,'@hidden",
+      " safe,\"'  =HYPERLINK(\"\"https://example.com\"\")\",'\t=1+1,plain",
+    ].join("\n"),
+  );
+});
+
 test("CSV parser accepts semicolon and tab-delimited exports", () => {
   assert.deepEqual(parseCsv('SKU;Notes\nABC;"contains; delimiter"'), {
     headers: ["SKU", "Notes"],

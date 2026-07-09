@@ -77,15 +77,25 @@ export function toCsv(rows: string[][]) {
     .map((row) =>
       row
         .map((value) => {
-          if (/[",\n\r]/.test(value)) {
-            return `"${value.replace(/"/g, '""')}"`;
+          const escapedValue = escapeSpreadsheetFormula(value);
+
+          if (/[",\n\r]/.test(escapedValue)) {
+            return `"${escapedValue.replace(/"/g, '""')}"`;
           }
 
-          return value;
+          return escapedValue;
         })
         .join(","),
     )
     .join("\n");
+}
+
+function escapeSpreadsheetFormula(value: string) {
+  if (/^[\t\r]/.test(value) || /^\s*[=+\-@]/.test(value)) {
+    return `'${value}`;
+  }
+
+  return value;
 }
 
 function detectDelimiter(text: string) {

@@ -125,7 +125,7 @@ export async function regenerateAuditFindings({
         title: "CSV contains unrecognized columns",
         message: `${file.originalFilename}: ${unknownColumns.join(", ")}`,
         recommendedAction:
-          "Keep the original CSV in the archive. Unrecognized columns are preserved in row payloads but are not used for matching.",
+          "Retain the merchant's original CSV separately. Unrecognized columns are preserved in parsed row payloads but are not used for matching.",
         source: {
           fileId: file.id,
           filename: file.originalFilename,

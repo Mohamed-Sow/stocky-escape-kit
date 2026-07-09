@@ -43,6 +43,10 @@ function runStaticChecks() {
   const failures = [];
   const envExamplePath = path.join(process.cwd(), ".env.example");
   const shopifyConfigPath = path.join(process.cwd(), "shopify.app.toml");
+  const publicIndexRoutePath = path.join(
+    process.cwd(),
+    "app/routes/_index/route.tsx",
+  );
   const packageJsonPath = path.join(process.cwd(), "package.json");
   const buildOutputCheckPath = path.join(
     process.cwd(),
@@ -79,6 +83,27 @@ function runStaticChecks() {
     failures.push("shopify.app.toml is missing.");
   } else {
     const shopifyConfig = readFileSync(shopifyConfigPath, "utf8");
+    const applicationUrl = readTomlString(shopifyConfig, "application_url");
+    const expectedCallbackUrl = applicationUrl
+      ? `${applicationUrl}/auth/callback`
+      : null;
+
+    if (!applicationUrl) {
+      failures.push("shopify.app.toml is missing application_url.");
+    }
+
+    if (expectedCallbackUrl && !shopifyConfig.includes(expectedCallbackUrl)) {
+      failures.push(
+        `shopify.app.toml auth.redirect_urls must include ${expectedCallbackUrl}.`,
+      );
+    }
+
+    if (shopifyConfig.includes("/api/auth")) {
+      failures.push(
+        "shopify.app.toml auth.redirect_urls must not point at /api/auth; the app uses the /auth route prefix.",
+      );
+    }
+
     for (const scope of REQUIRED_SCOPES) {
       if (!shopifyConfig.includes(scope)) {
         failures.push(`shopify.app.toml is missing ${scope}.`);
@@ -88,6 +113,17 @@ function runStaticChecks() {
     if (!shopifyConfig.includes(BILLING_WEBHOOK_TOPIC)) {
       failures.push(
         `shopify.app.toml is missing ${BILLING_WEBHOOK_TOPIC} webhook registration.`,
+      );
+    }
+  }
+
+  if (!existsSync(publicIndexRoutePath)) {
+    failures.push("app/routes/_index/route.tsx is missing.");
+  } else {
+    const publicIndexRoute = readFileSync(publicIndexRoutePath, "utf8");
+    if (publicIndexRoute.includes('action="/auth/login"')) {
+      failures.push(
+        "Public root must not render a manual shop-domain login form for App Store install flow.",
       );
     }
   }
@@ -131,6 +167,12 @@ function runStaticChecks() {
   }
 
   return failures;
+}
+
+function readTomlString(toml, key) {
+  const match = toml.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, "m"));
+
+  return match?.[1] ?? null;
 }
 
 async function runLiveChecks() {

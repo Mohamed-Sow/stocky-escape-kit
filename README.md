@@ -2,18 +2,18 @@
 
 ## Product Summary
 
-Stocky Escape Kit is a Shopify public app for merchants migrating away from Stocky before the August 31, 2026 shutdown. The app preserves Stocky exports, audits migration gaps, reconstructs supplier hints, and produces Shopify-ready cleanup reports.
+Stocky Escape Kit is a Shopify public app for merchants migrating away from Stocky before the August 31, 2026 shutdown. The app preserves parsed Stocky export rows and metadata, audits migration gaps, reconstructs supplier hints, and produces Shopify-ready cleanup reports.
 
 This app should not become full inventory management software in v1.
 
 ## Core Merchant Promise
 
-"Back up your Stocky records, find what will not migrate cleanly, and get a clear action list before Stocky shuts down."
+"Parse your Stocky exports, find what will not migrate cleanly, and get a clear action list before Stocky shuts down."
 
 ## MVP Outcomes
 
 - Merchant uploads Stocky CSV exports.
-- App parses and stores an archive of those exports.
+- App parses and stores a deterministic archive of normalized rows, unknown columns, file hashes, and import metadata.
 - App matches Stocky rows to Shopify SKUs, products, variants, inventory items, and locations.
 - App reports missing SKUs, duplicate SKUs, missing cost, missing barcode, missing vendor, unmatched locations, parse errors, and supplier reconstruction candidates.
 - Merchant exports clean archive and migration reports.
@@ -25,7 +25,7 @@ This app should not become full inventory management software in v1.
 - CSV uploads accept Stocky export files, detect report type, persist parsed rows, preserve unknown columns in row payloads, and record row-level warnings.
 - Catalog sync uses the Shopify GraphQL Admin API with `read_products`, `read_inventory`, and `read_locations`.
 - Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog.
-- Export downloads generate archive, SKU gap, supplier reconstruction, and migration checklist CSVs.
+- Export downloads generate parsed archive, SKU gap, supplier reconstruction, and migration checklist CSVs.
 
 ## Environment
 
@@ -75,7 +75,7 @@ See `docs/render-deployment.md` before creating or updating Render services.
 
 ## Suggested Pricing
 
-- Basic: `$99` migration archive and audit.
+- Basic: `$99` parsed migration archive and audit.
 - Pro: `$199` larger files, supplier reconstruction, all exports.
 - Plus: `$299` multi-location reports and priority migration checklist.
 
