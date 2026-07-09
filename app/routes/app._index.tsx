@@ -383,6 +383,7 @@ export default function Index() {
                   <th scope="col">Status</th>
                   <th scope="col">Rows</th>
                   <th scope="col">Warnings</th>
+                  <th scope="col">Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -393,6 +394,7 @@ export default function Index() {
                     <td>{file.status}</td>
                     <td>{file.rowCount}</td>
                     <td>{file.warningCount}</td>
+                    <td>{file.errorMessage ?? ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -441,6 +443,12 @@ export default function Index() {
                 <th scope="row">Locations</th>
                 <td>{data.latestSnapshot.locationCount}</td>
               </tr>
+              {data.latestSnapshot.errorMessage ? (
+                <tr>
+                  <th scope="row">Message</th>
+                  <td>{data.latestSnapshot.errorMessage}</td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         ) : null}
