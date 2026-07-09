@@ -27,6 +27,9 @@ This app is prepared for a low-maintenance Render production setup:
    - `SHOPIFY_API_SECRET`: the app client secret from Shopify.
    - `SHOPIFY_APP_URL`: the final Render HTTPS URL, for example `https://stocky-escape-kit.onrender.com`.
    - `SHOPIFY_APP_HANDLE`: `stocky-escape-kit-1`.
+   - `SHOPIFY_PARTNER_ORG_ID`: the Partner organization ID that owns the app.
+   - `SHOPIFY_PARTNER_API_TOKEN`: a Partner API client token with Manage apps permission.
+   - `SHOPIFY_PARTNER_APP_ID`: the app GID used by Partner API `activeSubscription`.
 5. Keep `DATABASE_URL` sourced from the Blueprint database reference. Do not paste a local database URL.
 
 ## Shopify production URL setup
@@ -64,7 +67,7 @@ set `DATABASE_URL` to the Render database connection string if running it from
 your machine against the production install. The smoke test must prove:
 
 - OAuth created or reused a Prisma offline session.
-- Billing is active for an accepted Stocky Escape Kit App Pricing subscription.
+- Billing is active according to Partner API `activeSubscription` for this app and shop.
 - Granted scopes are exactly read-only: `read_products`, `read_inventory`, `read_locations`.
 - Products and locations GraphQL queries succeed.
 

@@ -14,9 +14,10 @@ import { importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
   getActiveBillingName,
+  getPartnerBillingCheckForAdmin,
   getPlanSelectionUrl,
+  getPartnerBillingEvidence,
   hasActiveBillingSubscription,
-  isBillingTestMode,
   updateStoreBillingStatus,
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
@@ -34,12 +35,15 @@ const EXPORT_LABELS: Record<ExportType, string> = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing, redirect, session } = await authenticate.admin(request);
+  const { admin, redirect, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,
     scopes: session.scope ?? null,
   });
-  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
+  const billingCheck = await getPartnerBillingCheckForAdmin({
+    admin,
+    shop: session.shop,
+  });
 
   const billingStatus = await updateStoreBillingStatus({
     shop: session.shop,
@@ -108,7 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       active: billingActive,
       status: billingStatus,
       activePlan: getActiveBillingName(billingCheck),
-      testMode: isBillingTestMode(),
+      evidence: getPartnerBillingEvidence(billingCheck),
     },
     billingPlans: BILLING_PLAN_DETAILS,
     latestBatch: latestBatch
@@ -179,7 +183,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({
   request,
 }: ActionFunctionArgs): Promise<ActionData | Response | null> => {
-  const { admin, billing, redirect, session } = await authenticate.admin(request);
+  const { admin, redirect, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,
     scopes: session.scope ?? null,
@@ -193,7 +197,10 @@ export const action = async ({
     });
   }
 
-  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
+  const billingCheck = await getPartnerBillingCheckForAdmin({
+    admin,
+    shop: session.shop,
+  });
 
   await updateStoreBillingStatus({
     shop: session.shop,
@@ -299,10 +306,20 @@ export default function Index() {
           <s-text>Billing: </s-text>
           <s-text>
             {data.billing.active
-              ? `${data.billing.activePlan ?? data.billing.status}${data.billing.testMode ? " (test)" : ""}`
-              : `not active${data.billing.testMode ? " (test mode available)" : ""}`}
+              ? (data.billing.activePlan ?? data.billing.status)
+              : "not active"}
           </s-text>
         </s-paragraph>
+        {data.billing.evidence.length > 0 ? (
+          <ul>
+            {data.billing.evidence.map((item) => (
+              <li key={`${item.handle ?? ""}-${item.description ?? ""}`}>
+                {item.description ?? item.handle ?? "Subscription item"}
+                {item.price ? ` - ${item.price}` : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {!data.billing.active ? (
           <div style={gridStyle}>

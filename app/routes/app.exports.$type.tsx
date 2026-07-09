@@ -2,20 +2,23 @@ import { ExportType } from "@prisma/client";
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
+  getPartnerBillingCheckForAdmin,
   hasActiveBillingSubscription,
-  isBillingTestMode,
   updateStoreBillingStatus,
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
 import { generateExport, isExportType } from "../lib/exports.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { billing, session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,
     scopes: session.scope ?? null,
   });
-  const billingCheck = await billing.check({ isTest: isBillingTestMode() });
+  const billingCheck = await getPartnerBillingCheckForAdmin({
+    admin,
+    shop: session.shop,
+  });
 
   await updateStoreBillingStatus({
     shop: session.shop,

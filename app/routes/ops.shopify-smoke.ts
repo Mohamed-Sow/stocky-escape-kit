@@ -1,9 +1,12 @@
 import type { LoaderFunctionArgs } from "react-router";
 
 import db from "../db.server";
-import { BILLING_PLAN_NAMES } from "../models/billing.server";
+import {
+  getAdminGraphqlSmokeResult,
+  getPartnerBillingCheck,
+  getPartnerBillingEvidence,
+} from "../models/billing.server";
 
-const API_VERSION = "2026-07";
 const REQUIRED_SCOPES = ["read_products", "read_inventory", "read_locations"];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -41,10 +44,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
   }
 
-  let payload: SmokePayload;
+  if (session.expires && session.expires <= new Date()) {
+    return Response.json(
+      {
+        ok: false,
+        error: `Offline Shopify session for ${shop} expired at ${session.expires.toISOString()}.`,
+      },
+      { status: 424 },
+    );
+  }
+
+  let smokeResult: Awaited<ReturnType<typeof getAdminGraphqlSmokeResult>>;
 
   try {
-    payload = await adminGraphql({
+    smokeResult = await getAdminGraphqlSmokeResult({
       shop,
       accessToken: session.accessToken,
     });
@@ -62,25 +75,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { status: 424 },
     );
   }
-  const installation = payload.data?.currentAppInstallation;
-  const grantedScopes =
-    installation?.accessScopes.map((scope) => scope.handle).sort() ?? [];
+  const grantedScopes = smokeResult.accessScopes.sort();
   const missingScopes = REQUIRED_SCOPES.filter(
     (scope) => !grantedScopes.includes(scope),
   );
-  const activeSubscription = installation?.activeSubscriptions.find(
-    (subscription) =>
-      subscription.status === "ACTIVE" &&
-      (BILLING_PLAN_NAMES as readonly string[]).includes(subscription.name),
-  );
-  const billingName = activeSubscription?.name ?? null;
+  const billingCheck = await getPartnerBillingCheck({
+    shop,
+    shopId: smokeResult.shop.id,
+  });
+  const billingEvidence = getPartnerBillingEvidence(billingCheck);
   const failures = [
     ...missingScopes.map((scope) => `Missing scope: ${scope}`),
-    !billingName
-      ? "No active Stocky Escape Kit App Pricing subscription was found."
+    ...billingCheck.errors,
+    smokeResult.productSamples < 0
+      ? "Products query returned no connection."
       : null,
-    !payload.data?.products ? "Products query returned no connection." : null,
-    !payload.data?.locations ? "Locations query returned no connection." : null,
+    smokeResult.locationSamples < 0
+      ? "Locations query returned no connection."
+      : null,
   ].filter(Boolean);
 
   return Response.json(
@@ -88,82 +100,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ok: failures.length === 0,
       shop,
       tokenSource: "Prisma offline session",
-      billingName,
+      shopId: smokeResult.shop.id,
+      billingActive: billingCheck.active,
+      billingEvidence,
       grantedScopes,
-      productSamples: payload.data?.products?.edges.length ?? 0,
-      locationSamples: payload.data?.locations?.edges.length ?? 0,
+      productSamples: smokeResult.productSamples,
+      locationSamples: smokeResult.locationSamples,
       failures,
     },
     { status: failures.length === 0 ? 200 : 424 },
   );
 };
-
-async function adminGraphql({
-  shop,
-  accessToken,
-}: {
-  shop: string;
-  accessToken: string;
-}) {
-  const response = await fetch(
-    `https://${shop}/admin/api/${API_VERSION}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        query: `#graphql
-          query StockyEscapeKitOpsSmoke {
-            currentAppInstallation {
-              accessScopes {
-                handle
-              }
-              activeSubscriptions {
-                name
-                status
-              }
-            }
-            products(first: 1) {
-              edges {
-                node {
-                  id
-                }
-              }
-            }
-            locations(first: 1) {
-              edges {
-                node {
-                  id
-                }
-              }
-            }
-          }
-        `,
-      }),
-    },
-  );
-  const payload = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      `Shopify GraphQL returned HTTP ${response.status}: ${JSON.stringify(
-        payload,
-      )}`,
-    );
-  }
-
-  if (payload.errors?.length) {
-    throw new Error(
-      `Shopify GraphQL errors: ${payload.errors
-        .map((error: { message: string }) => error.message)
-        .join("; ")}`,
-    );
-  }
-
-  return payload as SmokePayload;
-}
 
 function normalizeShop(value: string | null) {
   if (!value) {
@@ -178,14 +125,3 @@ function normalizeShop(value: string | null) {
 
   return shop;
 }
-
-type SmokePayload = {
-  data?: {
-    currentAppInstallation?: {
-      accessScopes: Array<{ handle: string }>;
-      activeSubscriptions: Array<{ name: string; status: string }>;
-    };
-    products?: { edges: Array<{ node: { id: string } }> };
-    locations?: { edges: Array<{ node: { id: string } }> };
-  };
-};

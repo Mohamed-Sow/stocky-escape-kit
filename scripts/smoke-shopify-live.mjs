@@ -5,15 +5,10 @@ import path from "node:path";
 
 const API_VERSION = "2026-07";
 const REQUIRED_SCOPES = ["read_products", "read_inventory", "read_locations"];
-const BILLING_PLAN_NAMES = [
-  "Stocky Basic",
-  "Stocky Pro",
-  "Stocky Plus",
-  "shopify-test",
-  "Stocky Escape Kit Basic",
-  "Stocky Escape Kit Pro",
-  "Stocky Escape Kit Plus",
-  "Stocky Escape Kit Review Test",
+const PARTNER_ENV_KEYS = [
+  "SHOPIFY_PARTNER_ORG_ID",
+  "SHOPIFY_PARTNER_API_TOKEN",
+  "SHOPIFY_PARTNER_APP_ID",
 ];
 
 const mode = process.argv.includes("--static") ? "static" : "live";
@@ -88,6 +83,9 @@ function runStaticChecks() {
       "SHOPIFY_ADMIN_ACCESS_TOKEN",
       "SHOPIFY_SMOKE_ENDPOINT_URL",
       "SHOPIFY_SMOKE_TOKEN",
+      "SHOPIFY_PARTNER_ORG_ID",
+      "SHOPIFY_PARTNER_API_TOKEN",
+      "SHOPIFY_PARTNER_APP_ID",
     ]) {
       if (!envExample.includes(`${key}=`)) {
         failures.push(`.env.example is missing ${key}.`);
@@ -154,6 +152,11 @@ function runStaticChecks() {
       failures.push(
         'render.yaml must set production SHOPIFY_BILLING_TEST to "false".',
       );
+    }
+    for (const key of PARTNER_ENV_KEYS) {
+      if (!renderConfig.includes(`key: ${key}`)) {
+        failures.push(`render.yaml is missing ${key}.`);
+      }
     }
   }
 
@@ -230,6 +233,14 @@ function runStaticChecks() {
     }
 
     const source = readFileSync(routePath, "utf8");
+    if (source.includes("billing.check")) {
+      failures.push(
+        `${path.relative(
+          process.cwd(),
+          routePath,
+        )} still uses Admin billing.check instead of Partner API activeSubscription.`,
+      );
+    }
     if (source.includes("billing.request")) {
       failures.push(
         `${path.relative(
@@ -341,15 +352,15 @@ async function runLiveChecks() {
     });
 
     if (!session?.accessToken) {
-      return [
+      return withPartnerEnvFailures([
         `No offline Shopify session found for ${shop}. Run npm run dev, install the app on that dev store, then rerun npm run smoke:shopify.`,
-      ];
+      ]);
     }
 
     if (session.expires && session.expires <= new Date()) {
-      return [
+      return withPartnerEnvFailures([
         `Offline Shopify session for ${shop} expired at ${session.expires.toISOString()}. Run npm run dev, reinstall or reauthorize the app on that dev store, then rerun npm run smoke:shopify.`,
-      ];
+      ]);
     }
 
     return verifyAdminGraphql({
@@ -416,7 +427,7 @@ async function verifyHostedSmokeEndpoint({ endpointUrl, shop, smokeToken }) {
     );
   }
 
-  if (!BILLING_PLAN_NAMES.includes(payload.billingName)) {
+  if (payload.billingActive !== true) {
     failures.push(
       `No active Stocky Escape Kit App Pricing subscription was found for ${shop}.`,
     );
@@ -437,7 +448,8 @@ async function verifyHostedSmokeEndpoint({ endpointUrl, shop, smokeToken }) {
       shop,
       tokenSource: payload.tokenSource ?? "Hosted smoke endpoint",
       grantedScopes,
-      billingName: payload.billingName,
+      billingActive: payload.billingActive,
+      billingEvidence: payload.billingEvidence,
       productSamples: payload.productSamples,
       locationSamples: payload.locationSamples,
     });
@@ -466,6 +478,7 @@ async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
   const installation = payload.data?.currentAppInstallation;
   const grantedScopes =
     installation?.accessScopes.map((scope) => scope.handle) ?? [];
+  const shopId = payload.data?.shop?.id;
   const missingScopes = REQUIRED_SCOPES.filter(
     (scope) => !grantedScopes.includes(scope),
   );
@@ -476,17 +489,24 @@ async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
     );
   }
 
-  const activeSubscription = installation?.activeSubscriptions.find(
-    (subscription) =>
-      subscription.status === "ACTIVE" &&
-      BILLING_PLAN_NAMES.includes(subscription.name),
-  );
+  if (!shopId) {
+    failures.push("Shopify Admin GraphQL returned no shop ID.");
+  }
 
-  if (!activeSubscription) {
+  const billingCheck = shopId
+    ? await verifyPartnerBilling({
+        shop,
+        shopId,
+      })
+    : { active: false, evidence: [], errors: [] };
+
+  if (!billingCheck.active) {
     failures.push(
       `No active Stocky Escape Kit App Pricing subscription was found for ${shop}.`,
     );
   }
+
+  failures.push(...billingCheck.errors);
 
   if (!payload.data?.products) {
     failures.push("GraphQL products query returned no connection.");
@@ -501,7 +521,8 @@ async function verifyAdminGraphql({ shop, accessToken, tokenSource }) {
       shop,
       tokenSource,
       grantedScopes,
-      billingName: activeSubscription?.name ?? "",
+      billingActive: billingCheck.active,
+      billingEvidence: billingCheck.evidence,
       productSamples: payload.data.products.edges.length,
       locationSamples: payload.data.locations.edges.length,
     });
@@ -522,14 +543,13 @@ async function adminGraphql({ shop, accessToken }) {
       body: JSON.stringify({
         query: `#graphql
           query StockyEscapeKitLiveSmoke {
+            shop {
+              id
+              myshopifyDomain
+            }
             currentAppInstallation {
               accessScopes {
                 handle
-              }
-              activeSubscriptions {
-                name
-                status
-                test
               }
             }
             products(first: 1) {
@@ -571,6 +591,151 @@ async function adminGraphql({ shop, accessToken }) {
   }
 
   return payload;
+}
+
+async function verifyPartnerBilling({ shop, shopId }) {
+  const organizationId = process.env.SHOPIFY_PARTNER_ORG_ID?.trim();
+  const accessToken = process.env.SHOPIFY_PARTNER_API_TOKEN?.trim();
+  const appId = process.env.SHOPIFY_PARTNER_APP_ID?.trim();
+  const missingPartnerEnv = getMissingPartnerEnv();
+
+  if (missingPartnerEnv.length > 0) {
+    return {
+      active: false,
+      evidence: [],
+      errors: [
+        `Set ${missingPartnerEnv.join(
+          ", ",
+        )} for Partner API activeSubscription billing proof.`,
+      ],
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `https://partners.shopify.com/${organizationId}/api/${API_VERSION}/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": accessToken,
+        },
+        body: JSON.stringify({
+          query: `#graphql
+            query StockyEscapeKitActiveSubscription($appId: ID!, $shopId: ID!) {
+              activeSubscription(appId: $appId, shopId: $shopId) {
+                billingPeriod
+                cancelAtEndOfCycle
+                trialEndsAt
+                currentBillingCycle {
+                  startTime
+                  endTime
+                }
+                items {
+                  handle
+                  description
+                  price {
+                    __typename
+                    active
+                    currency
+                    ... on FlatRatePrice {
+                      amount
+                    }
+                    ... on TieredPrice {
+                      tiersMode
+                      tiers {
+                        upTo
+                        amountPerUnit
+                        amount
+                      }
+                    }
+                  }
+                }
+                legacySubscriptionId
+              }
+            }
+          `,
+          variables: {
+            appId,
+            shopId,
+          },
+        }),
+      },
+    );
+    const payload = await response.json();
+
+    if (!response.ok) {
+      return {
+        active: false,
+        evidence: [],
+        errors: [
+          `Shopify Partner API returned HTTP ${response.status}: ${JSON.stringify(payload)}`,
+        ],
+      };
+    }
+
+    if (payload.errors?.length) {
+      return {
+        active: false,
+        evidence: [],
+        errors: [
+          `Shopify Partner API errors: ${payload.errors
+            .map((error) => error.message)
+            .join("; ")}`,
+        ],
+      };
+    }
+
+    const subscription = payload.data?.activeSubscription ?? null;
+
+    return {
+      active: subscription !== null,
+      evidence:
+        subscription?.items?.map((item) => ({
+          handle: item.handle ?? null,
+          description: item.description ?? null,
+          price: formatBillingItemPrice(item.price ?? null),
+        })) ?? [],
+      errors: subscription
+        ? []
+        : [
+            `Partner API returned no active Shopify App Pricing subscription for ${shop}.`,
+          ],
+    };
+  } catch (error) {
+    return {
+      active: false,
+      evidence: [],
+      errors: [
+        error instanceof Error
+          ? `Shopify Partner API activeSubscription failed: ${error.message}`
+          : "Shopify Partner API activeSubscription failed with an unknown error.",
+      ],
+    };
+  }
+}
+
+function formatBillingItemPrice(price) {
+  if (!price) {
+    return null;
+  }
+
+  if (price.amount && price.currency) {
+    return `${price.amount} ${price.currency}`;
+  }
+
+  if (price.amount) {
+    return price.amount;
+  }
+
+  if (Array.isArray(price.tiers) && price.tiers.length > 0) {
+    return price.tiers
+      .map((tier) => tier.amount ?? tier.amountPerUnit)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return price.__typename ?? null;
 }
 
 function loadDotEnv() {
@@ -624,17 +789,46 @@ function normalizeShop(value) {
   return shop;
 }
 
+function getMissingPartnerEnv() {
+  return PARTNER_ENV_KEYS.filter((key) => !process.env[key]?.trim());
+}
+
+function withPartnerEnvFailures(failures) {
+  const missingPartnerEnv = getMissingPartnerEnv();
+
+  if (missingPartnerEnv.length === 0) {
+    return failures;
+  }
+
+  return [
+    ...failures,
+    `Set ${missingPartnerEnv.join(
+      ", ",
+    )} for Partner API activeSubscription billing proof.`,
+  ];
+}
+
 function printLiveSummary({
   shop,
   tokenSource,
   grantedScopes,
-  billingName,
+  billingActive,
+  billingEvidence,
   productSamples,
   locationSamples,
 }) {
   console.log(`Shop: ${shop}`);
   console.log(`Token source: ${tokenSource}`);
-  console.log(`Billing: ${billingName}`);
+  console.log(
+    `Billing: ${billingActive ? "active via Partner API activeSubscription" : "not active"}`,
+  );
+  for (const item of Array.isArray(billingEvidence) ? billingEvidence : []) {
+    console.log(
+      `Billing item: ${item.handle ?? "unknown handle"} | ${
+        item.description ?? "no description"
+      } | ${item.price ?? "no price"}`,
+    );
+  }
   console.log(`Granted scopes: ${grantedScopes.sort().join(", ")}`);
   console.log(`Products query sample rows: ${productSamples}`);
   console.log(`Locations query sample rows: ${locationSamples}`);

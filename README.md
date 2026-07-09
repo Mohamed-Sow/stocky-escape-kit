@@ -36,6 +36,10 @@ Set `SHOPIFY_BILLING_TEST=false` for production merchant installs.
 `SHOPIFY_TEST_SHOP` is used only by the live Shopify smoke test.
 `SHOPIFY_ADMIN_ACCESS_TOKEN` is optional and lets the live smoke test call
 Shopify directly when no local Prisma session is available.
+`SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_TOKEN`, and
+`SHOPIFY_PARTNER_APP_ID` are required on the server for Shopify App Pricing
+billing proof through the Partner API `activeSubscription` query. The Partner
+API client must have Manage apps permission.
 
 Partner Dashboard App Pricing must be configured before review:
 
@@ -65,15 +69,17 @@ npm run smoke:shopify
 
 The live smoke test loads `.env`, finds the offline session for
 `SHOPIFY_TEST_SHOP` in Prisma or uses `SHOPIFY_ADMIN_ACCESS_TOKEN`, calls the
-Shopify GraphQL Admin API, and verifies granted scopes, an active accepted
-Stocky Escape Kit App Pricing subscription, product query access, and location
-query access. It does not print access tokens.
+Shopify GraphQL Admin API for shop ID discovery, granted scopes, products, and
+locations, then calls Shopify Partner API `activeSubscription` for App Pricing
+billing proof. It does not print access tokens.
 
 If live smoke fails before contacting Shopify, set `DATABASE_URL` and
 `SHOPIFY_TEST_SHOP` in `.env` after installing the app, or set
-`SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct GraphQL proof.
-Select the private `$0` review/dev plan in the dev/review store
-before rerunning `npm run smoke:shopify`.
+`SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct Admin GraphQL
+proof. Also set `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_TOKEN`, and
+`SHOPIFY_PARTNER_APP_ID` so billing can be verified through the Partner API.
+Select the private `$0` review/dev plan in the dev/review store before
+rerunning `npm run smoke:shopify`.
 
 ## Production Hosting
 

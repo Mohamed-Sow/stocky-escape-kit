@@ -26,9 +26,11 @@ import {
   PRIVATE_TEST_BILLING_PLAN,
   getPlanSelectionUrl,
   getActiveBillingName,
+  getPartnerBillingEvidence,
   hasActiveBillingSubscription,
   isBillingTestMode,
   isValidBillingPlan,
+  type PartnerBillingCheck,
 } from "../app/models/billing.server";
 import { importStockyCsvFiles } from "../app/lib/uploads.server";
 import {
@@ -199,81 +201,67 @@ test("billing helpers validate configured App Pricing subscription names", () =>
   assert.equal(isValidBillingPlan(PRIVATE_TEST_BILLING_DISPLAY_NAME), true);
   assert.equal(isValidBillingPlan("Other Plan"), false);
 
-  const activeSubscription = {
-    id: "gid://shopify/AppSubscription/1",
-    name: "Stocky Basic",
-    status: "ACTIVE" as const,
-    test: false,
-    trialDays: 0,
-    createdAt: "2026-07-08T00:00:00Z",
-    currentPeriodEnd: "2026-08-08T00:00:00Z",
-    returnUrl: "https://stocky-escape-kit.onrender.com/app",
-    lineItems: [],
+  const activeCheck: PartnerBillingCheck = {
+    active: true,
+    shop: "stocky-escape-kit-partner-dev.myshopify.com",
+    shopId: "gid://shopify/Shop/1",
+    source: "Partner API activeSubscription",
+    missingEnv: [],
+    errors: [],
+    subscription: {
+      billingPeriod: "EVERY_30_DAYS",
+      cancelAtEndOfCycle: false,
+      trialEndsAt: null,
+      currentBillingCycle: {
+        startTime: "2026-07-01T00:00:00Z",
+        endTime: "2026-08-01T00:00:00Z",
+      },
+      legacySubscriptionId: null,
+      items: [
+        {
+          handle: "localized-review-plan",
+          description: "Localized private review plan",
+          price: {
+            type: "FlatRatePrice",
+            active: true,
+            currency: "USD",
+            amount: "0.00",
+            tiersMode: null,
+            tiers: [],
+          },
+        },
+      ],
+    },
   };
 
-  assert.equal(
-    getActiveBillingName({
-      hasActivePayment: true,
-      oneTimePurchases: [],
-      appSubscriptions: [activeSubscription],
-    }),
-    "Stocky Basic",
-  );
+  assert.equal(hasActiveBillingSubscription(activeCheck), true);
+  assert.equal(getActiveBillingName(activeCheck), "Localized private review plan");
+  assert.deepEqual(getPartnerBillingEvidence(activeCheck), [
+    {
+      handle: "localized-review-plan",
+      description: "Localized private review plan",
+      price: "0.00 USD",
+    },
+  ]);
   assert.equal(
     hasActiveBillingSubscription({
-      hasActivePayment: true,
-      oneTimePurchases: [],
-      appSubscriptions: [
-        {
-          ...activeSubscription,
-          name: PRIVATE_TEST_BILLING_PLAN,
-          test: true,
-        },
+      ...activeCheck,
+      active: false,
+      subscription: null,
+      errors: [
+        "Partner API returned no active Shopify App Pricing subscription.",
       ],
-    }),
-    true,
-  );
-  assert.equal(
-    hasActiveBillingSubscription({
-      hasActivePayment: true,
-      oneTimePurchases: [
-        {
-          id: "gid://shopify/AppPurchaseOneTime/1",
-          name: "Stocky Escape Kit Basic",
-          status: "ACTIVE",
-          test: true,
-        },
-      ],
-      appSubscriptions: [],
-    }),
-    false,
-  );
-  assert.equal(
-    hasActiveBillingSubscription({
-      hasActivePayment: true,
-      oneTimePurchases: [],
-      appSubscriptions: [
-        {
-          ...activeSubscription,
-          name: "Another App Subscription",
-        },
-      ],
-    }),
-    false,
-  );
-  assert.equal(
-    hasActiveBillingSubscription({
-      hasActivePayment: false,
-      oneTimePurchases: [],
-      appSubscriptions: [activeSubscription],
     }),
     false,
   );
   assert.equal(
     getActiveBillingName({
-      hasActivePayment: false,
-      oneTimePurchases: [],
-      appSubscriptions: [activeSubscription],
+      ...activeCheck,
+      active: false,
+      subscription: null,
+      errors: [
+        "Partner API returned no active Shopify App Pricing subscription.",
+      ],
     }),
     null,
   );
