@@ -36,8 +36,12 @@ After the first Render deploy succeeds:
 2. Set `SHOPIFY_APP_URL` in Render to that exact HTTPS origin.
 3. Update the Shopify app URL and redirect URL to:
    - App URL: the Render HTTPS origin.
-   - Redirect URL: `<Render HTTPS origin>/api/auth`.
+   - Redirect URL: `<Render HTTPS origin>/auth/callback`.
 4. Deploy the Shopify app configuration with `npm run deploy` after confirming `shopify.app.toml` points at the production URL.
+
+The Docker startup path runs `prisma migrate deploy`, so deployments that
+include raw CSV preservation must apply the `UploadedFile.rawContentBase64` and
+`UploadedFile.rawContentByteLength` migration before uploads are accepted.
 
 ## Validation
 
