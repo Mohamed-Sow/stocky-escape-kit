@@ -346,6 +346,12 @@ async function runLiveChecks() {
       ];
     }
 
+    if (session.expires && session.expires <= new Date()) {
+      return [
+        `Offline Shopify session for ${shop} expired at ${session.expires.toISOString()}. Run npm run dev, reinstall or reauthorize the app on that dev store, then rerun npm run smoke:shopify.`,
+      ];
+    }
+
     return verifyAdminGraphql({
       shop,
       accessToken: session.accessToken,
