@@ -271,7 +271,7 @@ test("billing helpers validate configured App Pricing subscription names", () =>
     delete process.env.SHOPIFY_APP_HANDLE;
     assert.equal(
       getPlanSelectionUrl("stocky-escape-kit-partner-dev.myshopify.com"),
-      "https://admin.shopify.com/store/stocky-escape-kit-partner-dev/charges/stocky-escape-kit-1/pricing_plans",
+      "https://admin.shopify.com/store/stocky-escape-kit-partner-dev/charges/stocky-escape-kit/pricing_plans",
     );
   } finally {
     if (originalAppHandle === undefined) {

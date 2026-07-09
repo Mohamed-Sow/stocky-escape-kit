@@ -23,7 +23,7 @@ export const PUBLIC_BILLING_PLAN_INVOICE_NAMES = {
 export const PRIVATE_TEST_BILLING_PLAN = "shopify-test";
 export const PRIVATE_TEST_BILLING_DISPLAY_NAME =
   "Stocky Escape Kit Review Test";
-export const DEFAULT_SHOPIFY_APP_HANDLE = "stocky-escape-kit-1";
+export const DEFAULT_SHOPIFY_APP_HANDLE = "stocky-escape-kit";
 
 export type PublicBillingPlanName =
   (typeof PUBLIC_BILLING_PLANS)[keyof typeof PUBLIC_BILLING_PLANS];
