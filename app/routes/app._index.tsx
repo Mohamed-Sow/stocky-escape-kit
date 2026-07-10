@@ -927,25 +927,6 @@ function Exports({ data, selectedBatchId }: ViewProps) {
       <section className={styles.panel}>
         <div className={styles.sectionHeading}>
           <div>
-            <p className={styles.eyebrow}>Subscription</p>
-            <h3>Manage your plan</h3>
-          </div>
-          <StatusPill value={data.billing.status} />
-        </div>
-        <p>
-          Current plan: <strong>{data.billing.activePlan ?? "Active Shopify plan"}</strong>.
-          Plan changes are completed securely through Shopify App Pricing.
-        </p>
-        <Form method="post">
-          <input type="hidden" name="intent" value="select_plan" />
-          <button className={styles.secondaryButton} type="submit">
-            View and change plan
-          </button>
-        </Form>
-      </section>
-      <section className={styles.panel}>
-        <div className={styles.sectionHeading}>
-          <div>
             <p className={styles.eyebrow}>Review handoff</p>
             <h3>Download the complete review kit</h3>
             <p>
@@ -1039,6 +1020,26 @@ function Settings({ data }: { data: LoaderData }) {
   const [armed, setArmed] = useState(false);
   return (
     <div className={styles.stack}>
+      <section className={styles.panel}>
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>Subscription</p>
+            <h3>Manage your plan</h3>
+          </div>
+          <StatusPill value={data.billing.status} />
+        </div>
+        <p>
+          Current plan:{" "}
+          <strong>{data.billing.activePlan ?? "Active Shopify plan"}</strong>.
+          Plan changes are completed securely through Shopify App Pricing.
+        </p>
+        <Form method="post">
+          <input type="hidden" name="intent" value="select_plan" />
+          <button className={styles.secondaryButton} type="submit">
+            View and change plan
+          </button>
+        </Form>
+      </section>
       <section className={styles.panel}>
         <p className={styles.eyebrow}>Data retention</p>
         <h3>What Stocky Escape Kit keeps</h3>

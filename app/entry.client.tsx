@@ -15,16 +15,15 @@ function showClientFailure() {
   document.body.appendChild(notice);
 }
 
-window.addEventListener("error", showClientFailure, { once: true });
-window.addEventListener("unhandledrejection", showClientFailure, {
-  once: true,
-});
-
-startTransition(() => {
-  hydrateRoot(
-    document,
-    <StrictMode>
-      <HydratedRouter />
-    </StrictMode>,
-  );
-});
+try {
+  startTransition(() => {
+    hydrateRoot(
+      document,
+      <StrictMode>
+        <HydratedRouter />
+      </StrictMode>,
+    );
+  });
+} catch {
+  showClientFailure();
+}
