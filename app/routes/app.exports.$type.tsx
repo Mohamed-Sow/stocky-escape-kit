@@ -8,6 +8,7 @@ import {
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
 import { generateExport, isExportType } from "../lib/exports.server";
+import { requireOwnedUploadBatch } from "../lib/batches.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -35,13 +36,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const exportType = params.type;
+  const batchId = new URL(request.url).searchParams.get("batch");
 
   if (!isExportType(exportType)) {
     throw new Response("Unknown export type.", { status: 404 });
   }
 
+  const batch = await requireOwnedUploadBatch({ storeId: store.id, batchId });
+
   const exportFile = await generateExport({
     storeId: store.id,
+    batchId: batch.id,
     exportType,
   });
 
@@ -80,13 +85,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   const exportType = params.type;
+  const batchId = new URL(request.url).searchParams.get("batch");
 
   if (!isExportType(exportType)) {
     throw new Response("Unknown export type.", { status: 404 });
   }
 
+  const batch = await requireOwnedUploadBatch({ storeId: store.id, batchId });
+
   const exportFile = await generateExport({
     storeId: store.id,
+    batchId: batch.id,
     exportType,
   });
 

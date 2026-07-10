@@ -44,7 +44,7 @@ Build a Shopify-only public app that helps merchants preserve raw Stocky CSV exp
 - Live install/linking is handled by Shopify OAuth plus an `afterAuth` store upsert.
 - Billing is configured through Shopify App Pricing, not in-app Billing API charge creation.
 - Public monthly billing names are `Stocky Basic` (`$99/mo`), `Stocky Pro` (`$199/mo`), and `Stocky Plus` (`$299/mo`); public listing display names can use `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
-- The private `$0` review/dev plan is Shopify's reserved `shopify-test` plan; label it as `Stocky Escape Kit Review Test` wherever listing descriptions allow. It is accepted by billing gates and smoke tests but is not public marketing.
+- The private `$0` review/dev plan is Shopify's reserved `shopify-test` plan; render it to merchants as `Stocky Review Test`. Treat Shopify's Partner API description `Shopify Test` as diagnostic evidence only. It is accepted by billing gates and smoke tests but is not public marketing.
 - Unpaid merchants are redirected to Shopify's hosted pricing page using `SHOPIFY_APP_HANDLE=stocky-escape-kit-1`.
 - Upload, parser, audit, catalog sync, and exports are implemented in server modules under `app/lib`.
 - GraphQL catalog sync is cursor-paginated and capped by `SHOPIFY_SYNC_VARIANT_LIMIT` to keep embedded actions bounded.

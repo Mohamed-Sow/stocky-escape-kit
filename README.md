@@ -44,7 +44,7 @@ API client must have Manage apps permission.
 Partner Dashboard App Pricing must be configured before review:
 
 - Public monthly billing plan names: `Stocky Basic`, `Stocky Pro`, `Stocky Plus`; use public listing display names `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
-- Private `$0` review/dev plan: Shopify exposes the reserved `shopify-test` plan; label it as `Stocky Escape Kit Review Test` wherever listing descriptions allow. This plan is accepted by smoke tests but must not be shown as public marketing.
+- Private `$0` review/dev plan: Shopify exposes the reserved `shopify-test` plan; render it to merchants as `Stocky Review Test`. Treat the Partner API description `Shopify Test` as diagnostic evidence only. This plan is accepted by smoke tests but must not be shown as public marketing.
 - Welcome/return links should route back to `/app`.
 
 ## Verification
@@ -67,16 +67,20 @@ npm run dev
 npm run smoke:shopify
 ```
 
-The live smoke test loads `.env`, finds the offline session for
-`SHOPIFY_TEST_SHOP` in Prisma or uses `SHOPIFY_ADMIN_ACCESS_TOKEN`, calls the
+The preferred proof path is the authenticated hosted `/ops/shopify-smoke`
+endpoint. It uses `unauthenticated.admin(shop)` from the official Shopify SDK,
+which refreshes and persists expiring offline tokens before the route calls the
+Admin GraphQL API. The local smoke script loads `.env`, uses the hosted endpoint
+when configured, or uses `SHOPIFY_ADMIN_ACCESS_TOKEN` for temporary direct proof, calls the
 Shopify GraphQL Admin API for shop ID discovery, granted scopes, products, and
 locations, then calls Shopify Partner API `activeSubscription` for App Pricing
 billing proof. It does not print access tokens.
 
-If live smoke fails before contacting Shopify, set `DATABASE_URL` and
-`SHOPIFY_TEST_SHOP` in `.env` after installing the app, or set
-`SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN` for direct Admin GraphQL
-proof. Also set `SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_TOKEN`, and
+If hosted smoke reports no offline session, reauthorize the installed app once.
+If token refresh fails, verify the refresh-token session fields and Shopify app
+credentials without exposing them. For temporary direct proof, set
+`SHOPIFY_TEST_SHOP` plus `SHOPIFY_ADMIN_ACCESS_TOKEN`. Also set
+`SHOPIFY_PARTNER_ORG_ID`, `SHOPIFY_PARTNER_API_TOKEN`, and
 `SHOPIFY_PARTNER_APP_ID` so billing can be verified through the Partner API.
 Select the private `$0` review/dev plan in the dev/review store before
 rerunning `npm run smoke:shopify`.

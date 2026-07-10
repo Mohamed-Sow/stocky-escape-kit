@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { unzipSync } from "fflate";
 import {
   BillingStatus,
   ExportStatus,
@@ -20,6 +21,12 @@ import { regenerateAuditFindings } from "../app/lib/audit.server";
 import { readCatalogSummary } from "../app/lib/catalog.server";
 import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
+import { generateReviewKit } from "../app/lib/review-kit.server";
+import {
+  RESET_CONFIRMATION,
+  resetStoreMigrationData,
+} from "../app/lib/reset.server";
+import { runHostedSmokeProof } from "../app/lib/shopify-smoke.server";
 import {
   BILLING_PLAN_NAMES,
   PRIVATE_TEST_BILLING_DISPLAY_NAME,
@@ -79,12 +86,12 @@ test("CSV export neutralizes spreadsheet formula injection values", () => {
     toCsv([
       ["sku", "supplier", "quantity", "note"],
       ["=cmd|' /C calc'!A0", "+SUM(1,2)", "-2", "@hidden"],
-      [" safe", "  =HYPERLINK(\"https://example.com\")", "\t=1+1", "plain"],
+      [" safe", '  =HYPERLINK("https://example.com")', "\t=1+1", "plain"],
     ]),
     [
       "sku,supplier,quantity,note",
       "'=cmd|' /C calc'!A0,\"'+SUM(1,2)\",'-2,'@hidden",
-      " safe,\"'  =HYPERLINK(\"\"https://example.com\"\")\",'\t=1+1,plain",
+      ' safe,"\'  =HYPERLINK(""https://example.com"")",\'\t=1+1,plain',
     ].join("\n"),
   );
 });
@@ -235,7 +242,10 @@ test("billing helpers validate configured App Pricing subscription names", () =>
   };
 
   assert.equal(hasActiveBillingSubscription(activeCheck), true);
-  assert.equal(getActiveBillingName(activeCheck), "Localized private review plan");
+  assert.equal(
+    getActiveBillingName(activeCheck),
+    "Localized private review plan",
+  );
   assert.deepEqual(getPartnerBillingEvidence(activeCheck), [
     {
       handle: "localized-review-plan",
@@ -243,6 +253,22 @@ test("billing helpers validate configured App Pricing subscription names", () =>
       price: "0.00 USD",
     },
   ]);
+  assert.equal(
+    getActiveBillingName({
+      ...activeCheck,
+      subscription: {
+        ...activeCheck.subscription!,
+        items: [
+          {
+            ...activeCheck.subscription!.items[0],
+            handle: PRIVATE_TEST_BILLING_PLAN,
+            description: "Shopify Test",
+          },
+        ],
+      },
+    }),
+    PRIVATE_TEST_BILLING_DISPLAY_NAME,
+  );
   assert.equal(
     hasActiveBillingSubscription({
       ...activeCheck,
@@ -310,6 +336,230 @@ test("billing test mode defaults safely outside production", () => {
       process.env.SHOPIFY_BILLING_TEST = originalBillingTest;
     }
   }
+});
+
+const smokeShop = "fixture-stocky-dev.myshopify.com";
+const smokeResult = {
+  shop: { id: "gid://shopify/Shop/1", myshopifyDomain: smokeShop },
+  accessScopes: ["read_products", "read_inventory", "read_locations"],
+  productSamples: 1,
+  locationSamples: 1,
+};
+
+function smokeBillingCheck({
+  active = true,
+  errors = [],
+}: {
+  active?: boolean;
+  errors?: string[];
+} = {}): PartnerBillingCheck {
+  return {
+    active,
+    shop: smokeShop,
+    shopId: smokeResult.shop.id,
+    source: "Partner API activeSubscription",
+    subscription: active
+      ? {
+          billingPeriod: "EVERY_30_DAYS",
+          cancelAtEndOfCycle: false,
+          trialEndsAt: null,
+          currentBillingCycle: null,
+          items: [
+            {
+              handle: PRIVATE_TEST_BILLING_PLAN,
+              description: "Shopify Test",
+              price: null,
+            },
+          ],
+          legacySubscriptionId: null,
+        }
+      : null,
+    missingEnv: [],
+    errors,
+  };
+}
+
+function smokeDependencies(
+  overrides: Partial<
+    NonNullable<Parameters<typeof runHostedSmokeProof>[0]["dependencies"]>
+  > = {},
+): NonNullable<Parameters<typeof runHostedSmokeProof>[0]["dependencies"]> {
+  return {
+    getAdmin: async () => ({ admin: {} as never, session: {} as never }),
+    getSmokeResult: async () => smokeResult,
+    getBillingCheck: async () => smokeBillingCheck(),
+    ...overrides,
+  };
+}
+
+test("hosted smoke lets the Shopify SDK refresh an expiring offline session", async () => {
+  let sdkCalls = 0;
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies({
+      getAdmin: async () => {
+        sdkCalls += 1;
+        return { admin: {} as never, session: {} as never };
+      },
+    }),
+  });
+
+  assert.equal(sdkCalls, 1);
+  assert.equal(proof.status, 200);
+  assert.equal(proof.body.ok, true);
+  assert.equal(proof.body.tokenSource, "Shopify SDK offline session");
+});
+
+test("hosted smoke reports a missing offline session without exposing credentials", async () => {
+  const error = new Error("Could not find a session for shop");
+  error.name = "SessionNotFoundError";
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies({
+      getAdmin: async () => {
+        throw error;
+      },
+    }),
+  });
+
+  assert.equal(proof.status, 424);
+  assert.equal(
+    proof.body.error,
+    `No offline Shopify session found for ${smokeShop}.`,
+  );
+});
+
+test("hosted smoke sanitizes offline token refresh failures", async () => {
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies({
+      getAdmin: async () => {
+        throw new Error("refresh response contained sensitive upstream detail");
+      },
+    }),
+  });
+
+  assert.equal(proof.status, 424);
+  assert.equal(
+    proof.body.error,
+    `The Shopify SDK could not refresh or use the offline session for ${smokeShop}.`,
+  );
+  assert.equal(JSON.stringify(proof.body).includes("sensitive"), false);
+});
+
+test("hosted smoke fails when required read-only scopes are missing", async () => {
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies({
+      getSmokeResult: async () => ({
+        ...smokeResult,
+        accessScopes: ["read_products"],
+      }),
+    }),
+  });
+
+  assert.equal(proof.status, 424);
+  assert.deepEqual(proof.body.failures?.slice(0, 2), [
+    "Missing scope: read_inventory",
+    "Missing scope: read_locations",
+  ]);
+});
+
+test("hosted smoke preserves Partner API failures as diagnostic evidence", async () => {
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies({
+      getBillingCheck: async () =>
+        smokeBillingCheck({
+          active: false,
+          errors: ["Partner API returned no active subscription."],
+        }),
+    }),
+  });
+
+  assert.equal(proof.status, 424);
+  assert.deepEqual(proof.body.failures, [
+    "Partner API returned no active subscription.",
+  ]);
+});
+
+test("hosted smoke returns successful scope, billing, product, and location proof", async () => {
+  const proof = await runHostedSmokeProof({
+    shop: smokeShop,
+    dependencies: smokeDependencies(),
+  });
+
+  assert.equal(proof.status, 200);
+  assert.equal(proof.body.ok, true);
+  assert.deepEqual(proof.body.grantedScopes, [
+    "read_inventory",
+    "read_locations",
+    "read_products",
+  ]);
+  assert.equal(proof.body.billingActive, true);
+  assert.equal(proof.body.productSamples, 1);
+  assert.equal(proof.body.locationSamples, 1);
+});
+
+test("store reset requires exact confirmation and deletes only store-scoped migration data", async () => {
+  const calls: Array<{ model: string; where: unknown }> = [];
+  const transaction = {
+    exportJob: {
+      deleteMany: async ({ where }: { where: unknown }) => (
+        calls.push({ model: "exportJob", where }),
+        { count: 4 }
+      ),
+    },
+    auditFinding: {
+      deleteMany: async ({ where }: { where: unknown }) => (
+        calls.push({ model: "auditFinding", where }),
+        { count: 62 }
+      ),
+    },
+    shopifyCatalogSnapshot: {
+      deleteMany: async ({ where }: { where: unknown }) => (
+        calls.push({ model: "shopifyCatalogSnapshot", where }),
+        { count: 1 }
+      ),
+    },
+    uploadBatch: {
+      deleteMany: async ({ where }: { where: unknown }) => (
+        calls.push({ model: "uploadBatch", where }),
+        { count: 1 }
+      ),
+    },
+  };
+  const database = {
+    $transaction: async (callback: (client: typeof transaction) => unknown) =>
+      callback(transaction),
+  } as never;
+
+  await assert.rejects(
+    resetStoreMigrationData({
+      storeId: "store-1",
+      confirmation: "DELETE",
+      database,
+    }),
+    /DELETE MIGRATION DATA/,
+  );
+  const result = await resetStoreMigrationData({
+    storeId: "store-1",
+    confirmation: RESET_CONFIRMATION,
+    database,
+  });
+
+  assert.deepEqual(result, {
+    exportJobs: 4,
+    auditFindings: 62,
+    catalogSnapshots: 1,
+    uploadBatches: 1,
+  });
+  assert.deepEqual(calls, [
+    { model: "exportJob", where: { storeId: "store-1" } },
+    { model: "auditFinding", where: { storeId: "store-1" } },
+    { model: "shopifyCatalogSnapshot", where: { storeId: "store-1" } },
+    { model: "uploadBatch", where: { storeId: "store-1" } },
+  ]);
 });
 
 test("Prisma billing enum still contains app statuses used by store updates", () => {
@@ -542,15 +792,27 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     });
 
     assert.equal(result.fileCount, fixtureFilenames.length);
+    assert.equal(result.fileCount, 10);
     assert.equal(result.failedFileCount, 1);
     assert.equal(result.importedRowCount, expectedImportedRows);
+    assert.equal(result.importedRowCount, 38);
     assert.equal(result.warningCount, expectedWarnings);
+    assert.equal(result.warningCount, 39);
 
     const [batch] = fakeDb.state.uploadBatches;
     assert.equal(batch.status, UploadBatchStatus.IMPORTED);
     assert.equal(batch.fileCount, fixtureFilenames.length);
     assert.equal(batch.importedRowCount, expectedImportedRows);
     assert.equal(fakeDb.state.uploadedFiles.length, fixtureFilenames.length);
+    assert.equal(
+      fakeDb.state.uploadedFiles.every(
+        (file) =>
+          typeof file.rawContentBase64 === "string" &&
+          typeof file.contentSha256 === "string" &&
+          typeof file.rawContentByteLength === "number",
+      ),
+      true,
+    );
     assert.equal(fakeDb.state.parsedRecords.length, expectedImportedRows);
 
     const edgeCaseContent = readStockyFixture("stocky-products-edge-cases.csv");
@@ -673,8 +935,23 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       ),
     );
 
+    const otherBatch = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(
+          ["SKU,Title\nOTHER-BATCH-ONLY,Other batch item\n"],
+          "other-batch-only.csv",
+          {
+            type: "text/csv",
+          },
+        ),
+      ],
+    });
+    assert.notEqual(otherBatch.batchId, result.batchId);
+
     const archive = await generateExport({
       storeId: store.id,
+      batchId: result.batchId,
       exportType: ExportType.ARCHIVE_CSV,
     });
     assert.ok(
@@ -685,9 +962,11 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.match(archive.body, /db:uploaded_file\.rawContentBase64:sha256:/);
     assert.match(archive.body, /stocky-po-proprietary-semicolon.csv/);
     assert.match(archive.body, /Internal Code #2/);
+    assert.doesNotMatch(archive.body, /OTHER-BATCH-ONLY/);
 
     const skuGap = await generateExport({
       storeId: store.id,
+      batchId: result.batchId,
       exportType: ExportType.SKU_GAP_REPORT,
     });
     assert.ok(
@@ -700,6 +979,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
 
     const supplier = await generateExport({
       storeId: store.id,
+      batchId: result.batchId,
       exportType: ExportType.SUPPLIER_RECONSTRUCTION_REPORT,
     });
     assert.ok(
@@ -712,6 +992,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
 
     const checklist = await generateExport({
       storeId: store.id,
+      batchId: result.batchId,
       exportType: ExportType.MIGRATION_CHECKLIST,
     });
     assert.ok(checklist.body.startsWith("item,status,evidence,next_action"));
@@ -721,14 +1002,44 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       /Historical Stocky purchase orders cannot be imported into Shopify/,
     );
 
+    const reviewKit = await generateReviewKit({
+      storeId: store.id,
+      batchId: result.batchId,
+    });
+    const zipEntries = unzipSync(reviewKit.bytes);
+    const exportDate = new Date().toISOString().slice(0, 10);
+    assert.deepEqual(Object.keys(zipEntries).sort(), [
+      `archive_csv-${exportDate}.csv`,
+      "manifest.json",
+      `migration_checklist-${exportDate}.csv`,
+      `sku_gap_report-${exportDate}.csv`,
+      `supplier_reconstruction_report-${exportDate}.csv`,
+    ]);
+    const manifest = JSON.parse(
+      Buffer.from(zipEntries["manifest.json"]).toString("utf8"),
+    ) as {
+      batchId: string;
+      files: Array<{ filename: string; bytes: number; sha256: string }>;
+    };
+    assert.equal(manifest.batchId, result.batchId);
+    assert.equal(manifest.files.length, 4);
+    for (const file of manifest.files) {
+      const bytes = Buffer.from(zipEntries[file.filename]);
+      assert.equal(bytes.byteLength, file.bytes);
+      assert.equal(
+        createHash("sha256").update(bytes).digest("hex"),
+        file.sha256,
+      );
+    }
+
     assert.equal(
       fakeDb.state.exportJobs.length,
-      Object.values(ExportType).length,
+      Object.values(ExportType).length * 2,
     );
     assert.deepEqual(
       fakeDb.state.exportJobs.map((job) => job.status),
       Array.from(
-        { length: Object.values(ExportType).length },
+        { length: Object.values(ExportType).length * 2 },
         () => ExportStatus.SUCCEEDED,
       ),
     );
@@ -855,6 +1166,7 @@ type AuditFindingRow = {
 type ExportJobRow = {
   id: string;
   storeId: string;
+  batchId: string | null;
   exportType: ExportType;
   status: ExportStatus;
   generatedFilePointer: string | null;
@@ -940,6 +1252,7 @@ type ParsedRecordFindManyArgs = {
     uploadedFile?: {
       batch?: {
         storeId?: string;
+        id?: string;
       };
     };
   };
@@ -988,6 +1301,7 @@ type AuditFindingCreateManyArgs = {
 type AuditFindingFindManyArgs = {
   where?: {
     storeId?: string;
+    batchId?: string | null;
     severity?: FindingSeverity;
     category?: FindingCategory | { in: FindingCategory[] };
   };
@@ -1001,6 +1315,7 @@ type AuditFindingCountArgs = {
 type ExportJobCreateArgs = {
   data: {
     storeId: string;
+    batchId?: string | null;
     exportType: ExportType;
     status: ExportStatus;
   };
@@ -1178,11 +1493,12 @@ function installInMemoryPrisma() {
       args: ParsedRecordFindManyArgs = {},
     ): Promise<Array<ParsedRecordRow | ParsedRecordWithFile>> => {
       const storeId = args.where?.uploadedFile?.batch?.storeId;
-      let rows = storeId
-        ? state.parsedRecords.filter((record) =>
-            recordBelongsToStore(record, storeId, state),
-          )
-        : [...state.parsedRecords];
+      const batchId = args.where?.uploadedFile?.batch?.id;
+      let rows = state.parsedRecords.filter(
+        (record) =>
+          (!storeId || recordBelongsToStore(record, storeId, state)) &&
+          (!batchId || recordBelongsToBatch(record, batchId, state)),
+      );
       rows = sortRows(rows, args.orderBy);
 
       if (!args.include?.uploadedFile) {
@@ -1200,12 +1516,13 @@ function installInMemoryPrisma() {
     },
     count: async (args: ParsedRecordCountArgs = {}) => {
       const storeId = args.where?.uploadedFile?.batch?.storeId;
+      const batchId = args.where?.uploadedFile?.batch?.id;
 
-      return storeId
-        ? state.parsedRecords.filter((record) =>
-            recordBelongsToStore(record, storeId, state),
-          ).length
-        : state.parsedRecords.length;
+      return state.parsedRecords.filter(
+        (record) =>
+          (!storeId || recordBelongsToStore(record, storeId, state)) &&
+          (!batchId || recordBelongsToBatch(record, batchId, state)),
+      ).length;
     },
   };
   mutableDb.shopifyCatalogSnapshot = {
@@ -1271,6 +1588,7 @@ function installInMemoryPrisma() {
       const job: ExportJobRow = {
         id: nextId("export"),
         storeId: data.storeId,
+        batchId: data.batchId ?? null,
         exportType: data.exportType,
         status: data.status,
         generatedFilePointer: null,
@@ -1346,6 +1664,18 @@ function recordBelongsToStore(
     : null;
 
   return batch?.storeId === storeId;
+}
+
+function recordBelongsToBatch(
+  record: ParsedRecordRow,
+  batchId: string,
+  state: InMemoryState,
+) {
+  const file = state.uploadedFiles.find(
+    (candidate) => candidate.id === record.uploadedFileId,
+  );
+
+  return file?.batchId === batchId;
 }
 
 function matchesAuditFindingWhere(

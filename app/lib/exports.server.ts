@@ -34,21 +34,24 @@ export function isExportType(value: unknown): value is ExportType {
 
 export async function generateExport({
   storeId,
+  batchId,
   exportType,
 }: {
   storeId: string;
+  batchId: string;
   exportType: ExportType;
 }) {
   const job = await db.exportJob.create({
     data: {
       storeId,
+      batchId,
       exportType,
       status: ExportStatus.RUNNING,
     },
   });
 
   try {
-    const csv = await buildCsv({ storeId, exportType });
+    const csv = await buildCsv({ storeId, batchId, exportType });
     const filename = `${exportType.toLowerCase()}-${new Date()
       .toISOString()
       .slice(0, 10)}.csv`;
@@ -57,7 +60,7 @@ export async function generateExport({
       where: { id: job.id },
       data: {
         status: ExportStatus.SUCCEEDED,
-        generatedFilePointer: `/app/exports/${exportType}`,
+        generatedFilePointer: `/app/exports/${exportType}?batch=${encodeURIComponent(batchId)}`,
         completedAt: new Date(),
       },
     });
@@ -85,32 +88,35 @@ export async function generateExport({
 
 async function buildCsv({
   storeId,
+  batchId,
   exportType,
 }: {
   storeId: string;
+  batchId: string;
   exportType: ExportType;
 }) {
   if (exportType === ExportType.ARCHIVE_CSV) {
-    return buildArchiveCsv(storeId);
+    return buildArchiveCsv(storeId, batchId);
   }
 
   if (exportType === ExportType.SKU_GAP_REPORT) {
-    return buildSkuGapCsv(storeId);
+    return buildSkuGapCsv(storeId, batchId);
   }
 
   if (exportType === ExportType.SUPPLIER_RECONSTRUCTION_REPORT) {
-    return buildSupplierCsv(storeId);
+    return buildSupplierCsv(storeId, batchId);
   }
 
-  return buildMigrationChecklistCsv(storeId);
+  return buildMigrationChecklistCsv(storeId, batchId);
 }
 
-async function buildArchiveCsv(storeId: string) {
+async function buildArchiveCsv(storeId: string, batchId: string) {
   const records = await db.parsedRecord.findMany({
     where: {
       uploadedFile: {
         batch: {
           storeId,
+          id: batchId,
         },
       },
     },
@@ -152,10 +158,11 @@ async function buildArchiveCsv(storeId: string) {
   ]);
 }
 
-async function buildSkuGapCsv(storeId: string) {
+async function buildSkuGapCsv(storeId: string, batchId: string) {
   const findings = await db.auditFinding.findMany({
     where: {
       storeId,
+      batchId,
       category: {
         in: [...SKU_GAP_CATEGORIES],
       },
@@ -185,12 +192,13 @@ async function buildSkuGapCsv(storeId: string) {
   ]);
 }
 
-async function buildSupplierCsv(storeId: string) {
+async function buildSupplierCsv(storeId: string, batchId: string) {
   const records = await db.parsedRecord.findMany({
     where: {
       uploadedFile: {
         batch: {
           storeId,
+          id: batchId,
         },
       },
     },
@@ -242,7 +250,7 @@ async function buildSupplierCsv(storeId: string) {
   ]);
 }
 
-async function buildMigrationChecklistCsv(storeId: string) {
+async function buildMigrationChecklistCsv(storeId: string, batchId: string) {
   const [
     recordCount,
     latestSnapshot,
@@ -255,6 +263,7 @@ async function buildMigrationChecklistCsv(storeId: string) {
         uploadedFile: {
           batch: {
             storeId,
+            id: batchId,
           },
         },
       },
@@ -269,18 +278,21 @@ async function buildMigrationChecklistCsv(storeId: string) {
     db.auditFinding.count({
       where: {
         storeId,
+        batchId,
         severity: "CRITICAL",
       },
     }),
     db.auditFinding.count({
       where: {
         storeId,
+        batchId,
         severity: "WARNING",
       },
     }),
     db.auditFinding.count({
       where: {
         storeId,
+        batchId,
         category: FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
       },
     }),

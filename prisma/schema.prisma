@@ -64,6 +64,7 @@ model UploadBatch {
   store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
   uploadedFiles UploadedFile[]
   auditFindings AuditFinding[]
+  exportJobs    ExportJob[]
 
   @@index([storeId, status])
 }
@@ -151,6 +152,7 @@ model AuditFinding {
 model ExportJob {
   id                   String       @id @default(cuid())
   storeId              String
+  batchId              String?
   exportType           ExportType
   status               ExportStatus @default(PENDING)
   generatedFilePointer String?
@@ -159,9 +161,11 @@ model ExportJob {
   updatedAt            DateTime     @updatedAt
   completedAt          DateTime?
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  batch UploadBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@index([storeId, exportType])
+  @@index([batchId, createdAt])
   @@index([status])
 }
 

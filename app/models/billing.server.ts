@@ -21,8 +21,7 @@ export const PUBLIC_BILLING_PLAN_INVOICE_NAMES = {
 } as const;
 
 export const PRIVATE_TEST_BILLING_PLAN = "shopify-test";
-export const PRIVATE_TEST_BILLING_DISPLAY_NAME =
-  "Stocky Escape Kit Review Test";
+export const PRIVATE_TEST_BILLING_DISPLAY_NAME = "Stocky Review Test";
 export const DEFAULT_SHOPIFY_APP_HANDLE = "stocky-escape-kit-1";
 
 export type PublicBillingPlanName =
@@ -76,7 +75,7 @@ export type PartnerBillingCheck = {
   errors: string[];
 };
 
-type AdminGraphqlClient = {
+export type AdminGraphqlClient = {
   graphql: (
     query: string,
     options?: { variables?: Record<string, unknown> },
@@ -190,7 +189,13 @@ export function isBillingTestMode() {
 }
 
 export function getActiveBillingName(check: PartnerBillingCheck) {
-  return getPrimaryBillingItem(check)?.description ?? null;
+  const item = getPrimaryBillingItem(check);
+
+  if (item?.handle === PRIVATE_TEST_BILLING_PLAN) {
+    return PRIVATE_TEST_BILLING_DISPLAY_NAME;
+  }
+
+  return item?.description ?? item?.handle ?? null;
 }
 
 export function hasActiveBillingSubscription(check: PartnerBillingCheck) {
@@ -198,11 +203,13 @@ export function hasActiveBillingSubscription(check: PartnerBillingCheck) {
 }
 
 export function getPartnerBillingEvidence(check: PartnerBillingCheck) {
-  return check.subscription?.items.map((item) => ({
-    handle: item.handle,
-    description: item.description,
-    price: formatBillingItemPrice(item.price),
-  })) ?? [];
+  return (
+    check.subscription?.items.map((item) => ({
+      handle: item.handle,
+      description: item.description,
+      price: formatBillingItemPrice(item.price),
+    })) ?? []
+  );
 }
 
 export function getPlanSelectionUrl(shop: string) {
@@ -255,6 +262,34 @@ export async function getAdminGraphqlSmokeResult({
       }
     `,
   });
+
+  return normalizeAdminGraphqlSmokePayload(payload);
+}
+
+export async function getAdminGraphqlSmokeResultForAdmin(
+  admin: AdminGraphqlClient,
+) {
+  const response = await admin.graphql(`#graphql
+    query StockyEscapeKitAdminSmoke {
+      shop {
+        id
+        myshopifyDomain
+      }
+      currentAppInstallation {
+        accessScopes {
+          handle
+        }
+      }
+      products(first: 1) {
+        edges { node { id title } }
+      }
+      locations(first: 1) {
+        edges { node { id name } }
+      }
+    }
+  `);
+  const payload = await response.json();
+  assertGraphqlResponse(response, payload, "Shopify Admin GraphQL smoke query");
 
   return normalizeAdminGraphqlSmokePayload(payload);
 }

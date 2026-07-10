@@ -59,7 +59,7 @@ SHOPIFY_TEST_SHOP=stocky-escape-kit-partner-dev.myshopify.com npm run smoke:shop
 Before the live smoke, configure Shopify App Pricing in the Partner Dashboard:
 
 - Public monthly billing plans: `Stocky Basic` (`$99/mo`), `Stocky Pro` (`$199/mo`), and `Stocky Plus` (`$299/mo`); public listing display names can use `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
-- Private `$0` review/dev plan: Shopify's reserved `shopify-test` plan, labeled `Stocky Escape Kit Review Test` wherever listing descriptions allow.
+- Private `$0` review/dev plan: Shopify's reserved `shopify-test` plan, rendered to merchants as `Stocky Review Test`; the Partner API description `Shopify Test` is diagnostic evidence only.
 - Welcome links should return reviewers to `/app`.
 
 For the live smoke, select the private review/dev plan in the dev store, then

@@ -21,7 +21,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 - [ ] Public monthly invoice plans are named exactly `Stocky Basic`, `Stocky Pro`, and `Stocky Plus`.
 - [ ] Public listing display names are `Stocky Escape Kit Basic`, `Stocky Escape Kit Pro`, and `Stocky Escape Kit Plus`.
 - [ ] Public prices are `$99/mo`, `$199/mo`, and `$299/mo`.
-- [ ] Private `$0` review/dev plan uses Shopify's reserved `shopify-test` plan and is labeled `Stocky Escape Kit Review Test` wherever listing descriptions allow.
+- [ ] Private `$0` review/dev plan uses Shopify's reserved `shopify-test` identity and is rendered in the app as `Stocky Review Test`; Partner API description `Shopify Test` remains diagnostic evidence only.
 - [ ] Private review/dev plan is not described as public marketing.
 - [ ] Welcome links return reviewers to `/app`.
 - [ ] Production env has `SHOPIFY_APP_HANDLE=stocky-escape-kit-1` and `SHOPIFY_BILLING_TEST=false`.
@@ -33,11 +33,13 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 1. Install the app on the provided review/dev store.
 2. Select the private `$0` review/dev plan from Shopify's hosted pricing page.
 3. Open the embedded app and confirm billing shows the review test plan.
-4. Upload CSV fixtures from `fixtures/stocky`, starting with `stocky-purchase-orders.csv`, `stocky-stocktakes.csv`, `stocky-historical-costs.csv`, and `stocky-vendors.csv`.
-5. Confirm parsed files show row counts, warnings, and raw CSV download links.
+4. Stage all ten CSV files from `fixtures/stocky` and submit them together as one migration run.
+5. Confirm the run shows 10 files, 38 imported rows, 39 warnings, one expected malformed-file failure, and a raw CSV download for every file.
 6. Run Shopify catalog sync.
 7. Review audit findings for SKU gaps, missing cost/barcode/vendor, supplier hints, and open purchase order indicators.
-8. Download archive, SKU gap, supplier reconstruction, and migration checklist exports.
+8. Confirm 62 audit findings for the canonical review-store catalog snapshot.
+9. Download archive, SKU gap, supplier reconstruction, and migration checklist exports.
+10. Download the review-kit ZIP and verify it contains the four CSV reports plus `manifest.json` with byte counts and SHA-256 checksums.
 
 ## Claims boundary
 
@@ -52,3 +54,7 @@ npm run risk:audit
 SHOPIFY_TEST_SHOP=stocky-escape-kit-partner-dev.myshopify.com npm run smoke:shopify
 curl -fsS https://stocky-escape-kit.onrender.com/healthz
 ```
+
+The hosted endpoint is the preferred expiring-token proof. Run it twice after
+deployment to prove refresh persistence. Direct Admin-token smoke is temporary
+diagnostic proof only.
