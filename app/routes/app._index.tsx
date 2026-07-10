@@ -5,6 +5,8 @@ import type {
   LoaderFunctionArgs,
 } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
@@ -538,9 +540,7 @@ export default function Index() {
           <ul style={exportListStyle}>
             {data.exports.map((item) => (
               <li key={item.type}>
-                <form method="post" action={item.href} target="_blank">
-                  <button type="submit">{item.label}</button>
-                </form>
+                <ExportDownloadButton label={item.label} type={item.type} />
               </li>
             ))}
           </ul>
@@ -593,6 +593,54 @@ function MetricCard({ label, value }: { label: string; value: number }) {
       <p style={metricValueStyle}>{value}</p>
       <p>{label}</p>
     </div>
+  );
+}
+
+function ExportDownloadButton({
+  label,
+  type,
+}: {
+  label: string;
+  type: ExportType;
+}) {
+  const shopify = useAppBridge();
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  async function downloadExport() {
+    setIsDownloading(true);
+
+    try {
+      const response = await fetch(`/app/exports/${type}`, {
+        headers: {
+          Authorization: `Bearer ${await shopify.idToken()}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export request failed with status ${response.status}.`);
+      }
+
+      const blob = await response.blob();
+      const filename =
+        response.headers
+          .get("Content-Disposition")
+          ?.match(/filename="([^"]+)"/)?.[1] ?? `${type.toLowerCase()}.csv`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
+  return (
+    <button type="button" onClick={downloadExport} disabled={isDownloading}>
+      {isDownloading ? "Preparing..." : label}
+    </button>
   );
 }
 
