@@ -59,6 +59,10 @@ test("public reviewer fixture pack contains exactly the ten canonical CSVs", asy
   assert.ok(filenames.includes("README.txt"));
   assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
   assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
+  assert.match(
+    readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
+    /COPY --from=build \/app\/fixtures\/stocky \.\/fixtures\/stocky/,
+  );
 });
 
 function readStockyFixture(filename: string) {
