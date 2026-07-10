@@ -405,12 +405,14 @@ export default function Index() {
                     <td>{file.warningCount}</td>
                     <td>
                       {file.rawCsvDownloadHref ? (
-                        <a href={file.rawCsvDownloadHref}>
-                          Download
-                          {file.rawContentByteLength
-                            ? ` (${file.rawContentByteLength} bytes)`
-                            : ""}
-                        </a>
+                        <AuthenticatedDownloadButton
+                          label={`Download${
+                            file.rawContentByteLength
+                              ? ` (${file.rawContentByteLength} bytes)`
+                              : ""
+                          }`}
+                          path={file.rawCsvDownloadHref}
+                        />
                       ) : (
                         ""
                       )}
@@ -540,7 +542,10 @@ export default function Index() {
           <ul style={exportListStyle}>
             {data.exports.map((item) => (
               <li key={item.type}>
-                <ExportDownloadButton label={item.label} type={item.type} />
+                <AuthenticatedDownloadButton
+                  label={item.label}
+                  path={`/app/exports/${item.type}`}
+                />
               </li>
             ))}
           </ul>
@@ -596,21 +601,23 @@ function MetricCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ExportDownloadButton({
+function AuthenticatedDownloadButton({
   label,
-  type,
+  path,
 }: {
   label: string;
-  type: ExportType;
+  path: string;
 }) {
   const shopify = useAppBridge();
   const [isDownloading, setIsDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function downloadExport() {
     setIsDownloading(true);
+    setError(null);
 
     try {
-      const response = await fetch(`/app/exports/${type}`, {
+      const response = await fetch(path, {
         headers: {
           Authorization: `Bearer ${await shopify.idToken()}`,
         },
@@ -624,7 +631,7 @@ function ExportDownloadButton({
       const filename =
         response.headers
           .get("Content-Disposition")
-          ?.match(/filename="([^"]+)"/)?.[1] ?? `${type.toLowerCase()}.csv`;
+          ?.match(/filename="([^"]+)"/)?.[1] ?? "stocky-export.csv";
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
 
@@ -632,15 +639,24 @@ function ExportDownloadButton({
       link.download = filename;
       link.click();
       URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "Download failed.",
+      );
     } finally {
       setIsDownloading(false);
     }
   }
 
   return (
-    <button type="button" onClick={downloadExport} disabled={isDownloading}>
-      {isDownloading ? "Preparing..." : label}
-    </button>
+    <>
+      <button type="button" onClick={downloadExport} disabled={isDownloading}>
+        {isDownloading ? "Preparing..." : label}
+      </button>
+      {error ? <span role="alert">{error}</span> : null}
+    </>
   );
 }
 
