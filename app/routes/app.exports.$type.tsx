@@ -1,5 +1,6 @@
 import { ExportType } from "@prisma/client";
 import type { LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   getPartnerBillingCheckForAdmin,
@@ -10,6 +11,51 @@ import { upsertInstalledStore } from "../models/store.server";
 import { generateExport, isExportType } from "../lib/exports.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const store = await upsertInstalledStore({
+    shop: session.shop,
+    scopes: session.scope ?? null,
+  });
+  const billingCheck = await getPartnerBillingCheckForAdmin({
+    admin,
+    shop: session.shop,
+  });
+
+  await updateStoreBillingStatus({
+    shop: session.shop,
+    billingCheck,
+  });
+
+  if (!hasActiveBillingSubscription(billingCheck)) {
+    throw new Response(
+      "A Stocky Escape Kit App Pricing subscription is required before exporting reports.",
+      {
+        status: 402,
+      },
+    );
+  }
+
+  const exportType = params.type;
+
+  if (!isExportType(exportType)) {
+    throw new Response("Unknown export type.", { status: 404 });
+  }
+
+  const exportFile = await generateExport({
+    storeId: store.id,
+    exportType,
+  });
+
+  return new Response(exportFile.body, {
+    headers: {
+      "Content-Type": exportFile.contentType,
+      "Content-Disposition": `attachment; filename="${exportFile.filename}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+};
+
+export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const store = await upsertInstalledStore({
     shop: session.shop,

@@ -11,7 +11,6 @@ import db from "../db.server";
 import { regenerateAuditFindings } from "../lib/audit.server";
 import { syncShopifyCatalog } from "../lib/catalog.server";
 import { importStockyCsvFiles } from "../lib/uploads.server";
-import { generateExport, isExportType } from "../lib/exports.server";
 import {
   BILLING_PLAN_DETAILS,
   getActiveBillingName,
@@ -214,30 +213,6 @@ export const action = async ({
       message:
         "Choose a Stocky Escape Kit App Pricing subscription before uploading CSVs, syncing Shopify, or exporting reports.",
     };
-  }
-
-  if (intent === "export") {
-    const exportType = formData.get("exportType");
-
-    if (!isExportType(exportType)) {
-      return {
-        status: "error",
-        message: "Choose a valid report export.",
-      };
-    }
-
-    const exportFile = await generateExport({
-      storeId: store.id,
-      exportType,
-    });
-
-    return new Response(exportFile.body, {
-      headers: {
-        "Content-Type": exportFile.contentType,
-        "Content-Disposition": `attachment; filename="${exportFile.filename}"`,
-        "Cache-Control": "no-store",
-      },
-    });
   }
 
   if (intent === "upload_csv") {
@@ -563,20 +538,9 @@ export default function Index() {
           <ul style={exportListStyle}>
             {data.exports.map((item) => (
               <li key={item.type}>
-                <Form
-                  method="post"
-                  action="/app"
-                  reloadDocument
-                  target="_blank"
-                >
-                  <input type="hidden" name="intent" value="export" />
-                  <input
-                    type="hidden"
-                    name="exportType"
-                    value={item.type}
-                  />
+                <form method="post" action={item.href} target="_blank">
                   <button type="submit">{item.label}</button>
-                </Form>
+                </form>
               </li>
             ))}
           </ul>
