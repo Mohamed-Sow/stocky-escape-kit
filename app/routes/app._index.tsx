@@ -20,6 +20,7 @@ import {
   useLocation,
   useNavigate,
   useNavigation,
+  useParams,
 } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import db from "../db.server";
@@ -305,8 +306,9 @@ export default function Index() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const location = useLocation();
+  const params = useParams();
   const url = new URLSearchParams(location.search);
-  const requestedView = url.get("view");
+  const requestedView = params.view ?? url.get("view");
   const view: View = VIEWS.includes(requestedView as View)
     ? (requestedView as View)
     : "overview";
@@ -1232,9 +1234,10 @@ type SerializedBatch = NonNullable<LoaderData["selectedBatch"]>;
 type ViewProps = { data: LoaderData; selectedBatchId: string | null };
 
 function viewHref(view: View, batchId: string | null) {
-  const params = new URLSearchParams({ view });
+  const params = new URLSearchParams();
   if (batchId) params.set("batch", batchId);
-  return `/app?${params}`;
+  const query = params.size ? `?${params}` : "";
+  return `/app/${view}${query}`;
 }
 function viewLabel(view: View) {
   return view.charAt(0).toUpperCase() + view.slice(1);
