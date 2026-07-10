@@ -1,7 +1,7 @@
 # Reviewer Instructions
 
 1. Install Stocky Escape Kit on the supplied review store and choose the private `shopify-test` plan. The embedded app displays this as **Stocky Review Test**.
-2. Open **Files**. Choose or drag all ten `.csv` files from `fixtures/stocky` into the staging queue. Multiple file-picker passes should accumulate files. Submit the queue once.
+2. Download the fictional review fixture pack from `https://stocky-escape-kit.onrender.com/review-fixtures`, then open **Files**. Choose or drag all ten `.csv` files into the staging queue. Multiple file-picker passes should accumulate files. Submit the queue once.
 3. Confirm one migration run is created with **10 files**, **38 imported rows**, **39 warnings**, and **1 expected failed file** (`stocky-malformed-unclosed-quote.csv`). Every file, including the malformed file, must have a raw archive download.
 4. Select the new run and choose **Sync Shopify and audit**. The canonical review store should report **17 products, 26 variants, 26 inventory items, 28 inventory levels, and 2 locations**.
 5. Open **Findings**. Confirm the selected run contains **62 findings**. Test severity and category filters, search for a SKU, and review the source filename/row plus recommended action.

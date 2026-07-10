@@ -22,6 +22,7 @@ import { readCatalogSummary } from "../app/lib/catalog.server";
 import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
 import { generateReviewKit } from "../app/lib/review-kit.server";
+import { generateReviewerFixturePack } from "../app/lib/review-fixtures.server";
 import {
   RESET_CONFIRMATION,
   resetStoreMigrationData,
@@ -46,6 +47,19 @@ import {
 } from "../app/lib/stocky-parser.server";
 
 const STOCKY_FIXTURE_DIR = path.join(process.cwd(), "fixtures", "stocky");
+
+test("public reviewer fixture pack contains exactly the ten canonical CSVs", async () => {
+  const archive = unzipSync(await generateReviewerFixturePack());
+  const filenames = Object.keys(archive).sort();
+
+  assert.equal(
+    filenames.filter((filename) => filename.endsWith(".csv")).length,
+    10,
+  );
+  assert.ok(filenames.includes("README.txt"));
+  assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
+  assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
+});
 
 function readStockyFixture(filename: string) {
   return readFileSync(path.join(STOCKY_FIXTURE_DIR, filename), "utf8");
