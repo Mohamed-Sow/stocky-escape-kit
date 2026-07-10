@@ -13,7 +13,6 @@ import type {
 } from "react-router";
 import {
   Form,
-  Link,
   useActionData,
   useFetcher,
   useLoaderData,
@@ -309,11 +308,13 @@ export default function Index() {
   const params = useParams();
   const url = new URLSearchParams(location.search);
   const requestedView = params.view ?? url.get("view");
-  const view: View = VIEWS.includes(requestedView as View)
-    ? (requestedView as View)
-    : "overview";
+  const [view, setView] = useState<View>(() =>
+    VIEWS.includes(requestedView as View)
+      ? (requestedView as View)
+      : "overview",
+  );
   const selectedBatchId = data.selectedBatch?.id ?? null;
-  const shared = { data, selectedBatchId };
+  const shared = { data, selectedBatchId, onViewChange: setView };
 
   return (
     <s-page heading="Stocky Escape Kit">
@@ -338,14 +339,15 @@ export default function Index() {
 
         <nav className={styles.tabs} aria-label="Migration workspace">
           {VIEWS.map((item) => (
-            <Link
+            <button
+              type="button"
               key={item}
               className={item === view ? styles.activeTab : styles.tab}
-              to={viewHref(item, selectedBatchId)}
+              onClick={() => setView(item)}
               aria-current={item === view ? "page" : undefined}
             >
               {viewLabel(item)}
-            </Link>
+            </button>
           ))}
         </nav>
 
@@ -363,7 +365,7 @@ export default function Index() {
   );
 }
 
-function Overview({ data, selectedBatchId }: ViewProps) {
+function Overview({ data, onViewChange }: ViewProps) {
   const batch = data.selectedBatch;
   const totalFindings = Object.values(data.severityCounts).reduce(
     (sum, count) => sum + count,
@@ -373,20 +375,20 @@ function Overview({ data, selectedBatchId }: ViewProps) {
     ? {
         title: "Upload your Stocky exports",
         detail: "Stage all related files and submit them as one migration run.",
-        href: viewHref("files", null),
+        view: "files" as const,
       }
     : !data.latestSnapshot || data.findings.length === 0
       ? {
           title: "Sync the Shopify catalog",
           detail:
             "Compare this run with current products, variants, inventory, and locations.",
-          href: viewHref("files", batch.id),
+          view: "files" as const,
         }
       : {
           title: "Review critical findings",
           detail:
             "Resolve identity and matching gaps before relying on the export kit.",
-          href: viewHref("findings", batch.id),
+          view: "findings" as const,
         };
 
   return (
@@ -397,9 +399,13 @@ function Overview({ data, selectedBatchId }: ViewProps) {
           <h3>{nextAction.title}</h3>
           <p>{nextAction.detail}</p>
         </div>
-        <Link className={styles.primaryButton} to={nextAction.href}>
+        <button
+          type="button"
+          className={styles.primaryButton}
+          onClick={() => onViewChange(nextAction.view)}
+        >
           Continue
-        </Link>
+        </button>
       </section>
       <section className={styles.metricGrid} aria-label="Migration progress">
         <Metric
@@ -436,7 +442,13 @@ function Overview({ data, selectedBatchId }: ViewProps) {
                 {batch ? formatRunName(batch.createdAt) : "No migration run"}
               </h3>
             </div>
-            <Link to={viewHref("files", selectedBatchId)}>View files</Link>
+            <button
+              type="button"
+              className={styles.textButton}
+              onClick={() => onViewChange("files")}
+            >
+              View files
+            </button>
           </div>
           {batch ? (
             <dl className={styles.definitionList}>
@@ -505,6 +517,7 @@ function Overview({ data, selectedBatchId }: ViewProps) {
 }
 
 function Files({ data, selectedBatchId }: ViewProps) {
+  const navigate = useNavigate();
   return (
     <div className={styles.stack}>
       <FileStager key={selectedBatchId ?? "new-run"} />
@@ -537,9 +550,10 @@ function Files({ data, selectedBatchId }: ViewProps) {
         {data.batches.length ? (
           <div className={styles.historyList}>
             {data.batches.map((batch) => (
-              <Link
+              <button
+                type="button"
                 key={batch.id}
-                to={viewHref("files", batch.id)}
+                onClick={() => navigate(viewHref("files", batch.id))}
                 className={
                   batch.id === selectedBatchId
                     ? styles.selectedHistoryRow
@@ -554,7 +568,7 @@ function Files({ data, selectedBatchId }: ViewProps) {
                   {batch.fileCount} files · {batch.importedRowCount} rows
                 </span>
                 <StatusPill value={batch.status} />
-              </Link>
+              </button>
             ))}
           </div>
         ) : (
@@ -1231,7 +1245,11 @@ function serializeBatch(
 
 type LoaderData = Awaited<ReturnType<typeof loader>>;
 type SerializedBatch = NonNullable<LoaderData["selectedBatch"]>;
-type ViewProps = { data: LoaderData; selectedBatchId: string | null };
+type ViewProps = {
+  data: LoaderData;
+  selectedBatchId: string | null;
+  onViewChange: (view: View) => void;
+};
 
 function viewHref(view: View, batchId: string | null) {
   const params = new URLSearchParams();

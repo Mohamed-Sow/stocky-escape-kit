@@ -66,9 +66,14 @@
 }
 .tab,
 .activeTab {
+  background: transparent;
+  border: 0;
   border-bottom: 3px solid transparent;
+  border-radius: 0;
   color: #4a4a4a;
+  cursor: pointer;
   font-weight: 650;
+  min-height: 0;
   padding: 10px 14px;
   text-decoration: none;
   white-space: nowrap;
@@ -319,9 +324,14 @@ td small {
 }
 .historyRow,
 .selectedHistoryRow {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: inherit;
   grid-template-columns: minmax(0, 1fr) auto auto;
   text-decoration: none;
+  text-align: left;
+  width: 100%;
 }
 .selectedHistoryRow {
   background: #f4f6f4;
