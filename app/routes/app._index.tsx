@@ -1,8 +1,7 @@
-import {
+import type {
   ExportType,
   FindingCategory,
   FindingSeverity,
-  SyncStatus,
 } from "@prisma/client";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -54,6 +53,32 @@ type ActionData = {
 
 const VIEWS = ["overview", "files", "findings", "exports", "settings"] as const;
 type View = (typeof VIEWS)[number];
+
+const EXPORT_TYPES = [
+  "ARCHIVE_CSV",
+  "SKU_GAP_REPORT",
+  "SUPPLIER_RECONSTRUCTION_REPORT",
+  "MIGRATION_CHECKLIST",
+] as const satisfies readonly ExportType[];
+
+const FINDING_SEVERITIES = [
+  "CRITICAL",
+  "WARNING",
+  "INFO",
+] as const satisfies readonly FindingSeverity[];
+
+const FINDING_CATEGORIES = [
+  "MISSING_SKU",
+  "UNMATCHED_SHOPIFY_SKU",
+  "DUPLICATE_SKU",
+  "MISSING_COST",
+  "MISSING_BARCODE",
+  "MISSING_VENDOR",
+  "LOCATION_MISMATCH",
+  "OPEN_PURCHASE_ORDER_INDICATOR",
+  "SUPPLIER_RECONSTRUCTION_CANDIDATE",
+  "PARSE_ERROR",
+] as const satisfies readonly FindingCategory[];
 
 const EXPORT_DETAILS: Record<
   ExportType,
@@ -187,7 +212,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       recommendedAction: finding.recommendedAction,
       source: finding.source,
     })),
-    exports: Object.values(ExportType).map((type) => ({
+    exports: EXPORT_TYPES.map((type) => ({
       type,
       ...EXPORT_DETAILS[type],
     })),
@@ -262,7 +287,7 @@ export const action = async ({
     const batch = await requireOwnedUploadBatch({ storeId: store.id, batchId });
     const snapshot = await syncShopifyCatalog({ admin, storeId: store.id });
 
-    if (snapshot.syncStatus === SyncStatus.FAILED) {
+    if (snapshot.syncStatus === "FAILED") {
       return {
         status: "error",
         message: snapshot.errorMessage ?? "Shopify catalog sync failed.",
@@ -835,7 +860,7 @@ function Findings({ data, selectedBatchId }: ViewProps) {
               onChange={(event) => setSeverity(event.target.value)}
             >
               <option value="ALL">All severities</option>
-              {Object.values(FindingSeverity).map((item) => (
+              {FINDING_SEVERITIES.map((item) => (
                 <option key={item} value={item}>
                   {humanize(item)}
                 </option>
@@ -849,7 +874,7 @@ function Findings({ data, selectedBatchId }: ViewProps) {
               onChange={(event) => setCategory(event.target.value)}
             >
               <option value="ALL">All categories</option>
-              {Object.values(FindingCategory).map((item) => (
+              {FINDING_CATEGORIES.map((item) => (
                 <option key={item} value={item}>
                   {humanize(item)}
                 </option>

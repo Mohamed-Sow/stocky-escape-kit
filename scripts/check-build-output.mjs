@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 const build = spawn("npm", ["run", "build"], {
   env: {
@@ -36,6 +38,22 @@ build.on("close", (code) => {
   if (output.includes("Future Flag Warning")) {
     failures.push(
       "React Router future-flag warnings returned. Keep react-router.config.ts aligned with the installed @react-router/dev future flags.",
+    );
+  }
+
+  const assetDirectory = path.join(process.cwd(), "build", "client", "assets");
+  const browserAssets = readdirSync(assetDirectory).filter((filename) =>
+    filename.endsWith(".js"),
+  );
+  const prismaBrowserImports = browserAssets.filter((filename) =>
+    readFileSync(path.join(assetDirectory, filename), "utf8").includes(
+      '.prisma/client/index-browser',
+    ),
+  );
+
+  if (prismaBrowserImports.length > 0) {
+    failures.push(
+      `Browser bundles contain Prisma runtime imports that prevent hydration: ${prismaBrowserImports.join(", ")}. Use type-only Prisma imports and client-safe constants in rendered routes.`,
     );
   }
 
