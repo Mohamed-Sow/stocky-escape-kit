@@ -525,6 +525,10 @@ function Overview({ data, onViewChange }: ViewProps) {
                 <dd>{data.latestSnapshot.inventoryItemCount}</dd>
               </div>
               <div>
+                <dt>Inventory levels</dt>
+                <dd>{data.latestSnapshot.inventoryLevelCount}</dd>
+              </div>
+              <div>
                 <dt>Locations</dt>
                 <dd>{data.latestSnapshot.locationCount}</dd>
               </div>
