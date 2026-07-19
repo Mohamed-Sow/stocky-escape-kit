@@ -119,12 +119,12 @@ test("finding result pages remain bounded and reachable", () => {
   assert.deepEqual(resolveFindingsPage(null, 0), {
     page: 1,
     pageCount: 1,
-    pageSize: 100,
+    pageSize: 25,
     skip: 0,
     total: 0,
   });
-  assert.equal(resolveFindingsPage("2", 250).skip, 100);
-  assert.equal(resolveFindingsPage("99", 250).page, 3);
+  assert.equal(resolveFindingsPage("2", 250).skip, 25);
+  assert.equal(resolveFindingsPage("99", 250).page, 10);
   assert.equal(resolveFindingsPage("invalid", 250).page, 1);
 });
 

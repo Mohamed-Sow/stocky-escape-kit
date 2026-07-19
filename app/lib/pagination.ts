@@ -1,5 +1,5 @@
 export const RUN_HISTORY_PAGE_SIZE = 25;
-export const FINDINGS_PAGE_SIZE = 100;
+export const FINDINGS_PAGE_SIZE = 25;
 
 export function resolveRunHistoryPage(value: string | null, total: number) {
   const safeTotal = Math.max(0, total);

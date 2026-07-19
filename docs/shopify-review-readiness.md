@@ -40,7 +40,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 5. Confirm the run shows 10 files, 38 imported rows, 34 warnings (including the deliberate duplicate-header warning), one expected malformed-file failure, and a raw CSV download for every file.
 6. Run Shopify catalog sync.
 7. Review audit findings for SKU gaps, missing cost/barcode/vendor, supplier hints, and open purchase order indicators.
-8. Confirm 57 audit findings for the canonical review-store catalog snapshot, including the deliberate duplicate-header, column-count, and malformed-file unknown-column parser findings. Missing-SKU rows and open purchase orders should be grouped into actionable findings instead of repeated noise.
+8. Confirm the audit includes the deliberate duplicate-header, column-count, and malformed-file unknown-column parser findings, plus findings derived from the review store's current Shopify catalog. The exact total varies with that live catalog; the local canonical mock catalog produces 57 regression-test findings. Missing-SKU rows and open purchase orders should be grouped into actionable findings instead of repeated noise.
 9. Download parsed archive, complete audit findings, supplier evidence, and migration checklist exports.
 10. Download the review-kit ZIP and verify it contains all ten original CSV files under `source/`, the four generated reports, and `manifest.json` with byte counts and SHA-256 checksums.
 
