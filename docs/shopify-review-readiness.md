@@ -37,7 +37,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 2. Select the private `$0` review/dev plan from Shopify's hosted pricing page.
 3. Open the embedded app and confirm billing shows the review test plan.
 4. Stage all ten CSV files from `fixtures/stocky` and submit them together as one migration run.
-5. Confirm the run shows 10 files, 38 parsed rows, 33 warnings (including the deliberate duplicate-header warning), one expected malformed-file failure, and a raw CSV download for every file.
+5. Confirm the run shows 10 files, 38 parsed rows, 32 warnings (including the deliberate duplicate-header warning), one expected malformed-file failure, and a raw CSV download for every file.
 6. Run Shopify catalog sync.
 7. Review audit findings for SKU gaps, missing cost/barcode/vendor, supplier hints, and open purchase order indicators.
 8. Confirm the audit includes the deliberate duplicate-header, column-count, and malformed-file unknown-column parser findings, plus findings derived from the review store's current Shopify catalog. The exact total varies with that live catalog; the local canonical mock catalog produces 57 regression-test findings. Missing-SKU rows and open purchase orders should be grouped into actionable findings instead of repeated noise.

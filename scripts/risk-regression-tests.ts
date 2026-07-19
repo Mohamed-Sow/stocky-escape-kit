@@ -214,7 +214,7 @@ test("public reviewer fixture pack contains exactly the ten canonical CSVs", asy
   assert.ok(filenames.includes("README.txt"));
   assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
   assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
-  assert.match(new TextDecoder().decode(archive["README.txt"]), /33 warnings/);
+  assert.match(new TextDecoder().decode(archive["README.txt"]), /32 warnings/);
   assert.match(
     readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
     /COPY --from=build \/app\/fixtures\/stocky \.\/fixtures\/stocky/,
@@ -393,6 +393,11 @@ test("Stocky parser recognizes current documented Stocky report shapes", () => {
     content:
       "Transfer Number,Status,Origin,Destination,Reason,SKU,Quantity\nTR-1,Complete,Warehouse,Shop floor,Replenishment,SKU-1,4",
   });
+  const purchaseOrder = parseStockyCsv({
+    filename: "po_1848.csv",
+    content:
+      "SKU,Qty Ordered,Cost (base),Total Cost (base)\nABC123,10,15.00,150.00",
+  });
   const currentStock = parseStockyCsv({
     filename: "current-stock-on-hand.csv",
     content:
@@ -419,6 +424,18 @@ test("Stocky parser recognizes current documented Stocky report shapes", () => {
   assert.equal(transfers.reportType, StockyReportType.INVENTORY_ACTIVITY);
   assert.deepEqual(transfers.unknownColumns, []);
   assert.deepEqual(transfers.records[0].warnings, []);
+
+  assert.equal(purchaseOrder.reportType, StockyReportType.PURCHASE_ORDERS);
+  assert.deepEqual(purchaseOrder.unknownColumns, []);
+  assert.deepEqual(purchaseOrder.records[0].warnings, []);
+  assert.equal(
+    (
+      purchaseOrder.records[0].normalizedPayload.normalized as {
+        totalCost?: string;
+      }
+    ).totalCost,
+    "150.00",
+  );
 
   assert.equal(currentStock.reportType, StockyReportType.PRODUCTS);
   assert.equal(currentProductCosts.reportType, StockyReportType.PRODUCTS);
@@ -474,6 +491,7 @@ test("Stocky parser detects product exports and preserves unknown columns", () =
     supplier: null,
     location: null,
     cost: null,
+    totalCost: null,
     retailValue: null,
     adjustmentCost: null,
     quantity: null,
@@ -1238,7 +1256,6 @@ test("proprietary delimiter fixtures preserve odd Stocky and Shopify columns", (
 
   assert.equal(proprietaryPo.rowCount, 3);
   assert.deepEqual(proprietaryPo.unknownColumns, [
-    "Total Cost (base)",
     "Lot / Serial",
     "RFID Tag",
     "Freight & Customs",
@@ -1252,6 +1269,7 @@ test("proprietary delimiter fixtures preserve odd Stocky and Shopify columns", (
   assert.equal(getNormalized(firstPoRecord, "status"), "Not received");
   assert.equal(getNormalized(firstPoRecord, "supplier"), "SUP-REF-771");
   assert.equal(getNormalized(firstPoRecord, "quantity"), "6");
+  assert.equal(getNormalized(firstPoRecord, "totalCost"), "75,00");
   assert.equal(getNormalized(firstPoRecord, "cost"), "12,50");
   assert.equal(getNormalized(firstPoRecord, "location"), "Main Warehouse");
   assert.equal(
@@ -1408,7 +1426,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(result.importedRowCount, expectedImportedRows);
     assert.equal(result.importedRowCount, 38);
     assert.equal(result.warningCount, expectedWarnings);
-    assert.equal(result.warningCount, 33);
+    assert.equal(result.warningCount, 32);
 
     const [batch] = fakeDb.state.uploadBatches;
     assert.equal(batch.status, UploadBatchStatus.IMPORTED);
@@ -1485,7 +1503,6 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       "Internal Code",
     ]);
     assert.deepEqual(proprietaryPayload.meta?.unknownColumns, [
-      "Total Cost (base)",
       "Lot / Serial",
       "RFID Tag",
       "Freight & Customs",

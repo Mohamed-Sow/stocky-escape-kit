@@ -33,7 +33,7 @@ export async function generateReviewerFixturePack() {
       "",
       "These files contain fictional test data only.",
       "Upload all ten CSV files together as one migration run.",
-      "Expected result: 38 parsed rows, 33 warnings, and one malformed file failure.",
+      "Expected result: 38 parsed rows, 32 warnings, and one malformed file failure.",
     ].join("\n"),
   );
 

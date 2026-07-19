@@ -84,7 +84,13 @@ const FIELD_ALIASES = {
     "avg_cost",
     "landed_cost",
     "unit_price",
+  ],
+  totalCost: [
     "total_cost",
+    "total_cost_base",
+    "extended_cost",
+    "extended_price",
+    "line_total",
   ],
   retailValue: [
     "retail_price",
@@ -210,7 +216,14 @@ export function parseStockyCsv({
       warnings.push("column_count_mismatch");
     }
 
-    if (normalized.cost && !isPlausibleNumber(normalized.cost)) {
+    if (
+      [
+        normalized.cost,
+        normalized.totalCost,
+        normalized.retailValue,
+        normalized.adjustmentCost,
+      ].some((value) => value && !isPlausibleNumber(value))
+    ) {
       warnings.push("invalid_cost");
     }
 
@@ -367,6 +380,7 @@ function extractNormalizedFields(
     supplier: valueFor(raw, headerColumns, FIELD_ALIASES.supplier),
     location: valueFor(raw, headerColumns, FIELD_ALIASES.location),
     cost: valueFor(raw, headerColumns, FIELD_ALIASES.cost),
+    totalCost: valueFor(raw, headerColumns, FIELD_ALIASES.totalCost),
     retailValue: valueFor(raw, headerColumns, FIELD_ALIASES.retailValue),
     adjustmentCost: valueFor(
       raw,
