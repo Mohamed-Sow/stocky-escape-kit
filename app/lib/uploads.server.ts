@@ -14,6 +14,7 @@ import {
   type PlanEntitlements,
 } from "./entitlements.server";
 import { parseStockyCsv } from "./stocky-parser.server";
+import { decodeStockyCsvBytes } from "./text-decoding.server";
 
 export type UploadImportResult = {
   batchId: string;
@@ -73,13 +74,14 @@ export async function importStockyCsvFiles({
       }
 
       const rawContent = Buffer.from(await file.arrayBuffer());
-      const content = rawContent.toString("utf8");
+      const decoded = decodeStockyCsvBytes(rawContent);
       const contentSha256 = createHash("sha256")
         .update(rawContent)
         .digest("hex");
       const parsed = parseStockyCsv({
         filename: file.name || "stocky-export.csv",
-        content,
+        content: decoded.content,
+        sourceEncoding: decoded.encoding,
       });
       const rowLimitExceeded = parsed.rowCount > entitlements.maxRowsPerFile;
       const batchRowLimitExceeded =
@@ -126,6 +128,7 @@ export async function importStockyCsvFiles({
           contentSha256,
           rawContentBase64: rawContent.toString("base64"),
           rawContentByteLength: rawContent.byteLength,
+          parseMetadata: parsed.metadata,
           rowCount: failed ? 0 : parsed.rowCount,
           warningCount: fileWarningCount,
           errorMessage: failed ? errorMessage : null,

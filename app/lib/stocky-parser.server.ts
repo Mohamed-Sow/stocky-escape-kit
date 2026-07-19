@@ -1,6 +1,7 @@
 import { StockyReportType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { parseCsv } from "./csv.server";
+import type { StockyCsvEncoding } from "./text-decoding.server";
 
 type ParsedStockyRecord = {
   sourceRowNumber: number;
@@ -15,6 +16,7 @@ export type ParsedStockyFile = {
   warningCount: number;
   unknownColumns: string[];
   parseErrors: string[];
+  metadata: Prisma.InputJsonObject;
   records: ParsedStockyRecord[];
 };
 
@@ -144,11 +146,19 @@ const KNOWN_COLUMNS: Set<string> = new Set(Object.values(FIELD_ALIASES).flat());
 export function parseStockyCsv({
   filename,
   content,
+  sourceEncoding,
 }: {
   filename: string;
   content: string;
+  sourceEncoding?: StockyCsvEncoding;
 }): ParsedStockyFile {
   const csv = parseCsv(content);
+  const parseErrors = [...csv.errors];
+
+  if (csv.headers.length === 0) {
+    parseErrors.push("CSV does not contain a header row.");
+  }
+
   const headerColumns = buildHeaderColumns(csv.headers);
   const normalizedHeaders = headerColumns.map((column) => column.normalized);
 
@@ -157,6 +167,12 @@ export function parseStockyCsv({
     (header) => !KNOWN_COLUMNS.has(normalizeHeader(header)),
   );
   const duplicateHeaders = findDuplicateHeaders(csv.headers);
+  const metadata: Prisma.InputJsonObject = {
+    headers: csv.headers,
+    unknownColumns,
+    ...(duplicateHeaders.length > 0 ? { duplicateHeaders } : {}),
+    ...(sourceEncoding ? { sourceEncoding } : {}),
+  };
 
   const records = csv.rows.map(({ sourceRowNumber, values }) => {
     const raw = Object.fromEntries(
@@ -176,6 +192,18 @@ export function parseStockyCsv({
       warnings.push("column_count_mismatch");
     }
 
+    if (normalized.cost && !isPlausibleNumber(normalized.cost)) {
+      warnings.push("invalid_cost");
+    }
+
+    if (normalized.quantity && !isPlausibleNumber(normalized.quantity)) {
+      warnings.push("invalid_quantity");
+    }
+
+    if (normalized.date && !isPlausibleDate(normalized.date)) {
+      warnings.push("invalid_date");
+    }
+
     return {
       sourceRowNumber,
       sku: normalized.sku,
@@ -184,19 +212,16 @@ export function parseStockyCsv({
         reportType,
         raw,
         normalized,
-        meta: {
-          headers: csv.headers,
-          unknownColumns,
-          ...(duplicateHeaders.length > 0 ? { duplicateHeaders } : {}),
-        },
+        meta: metadata,
       },
       warnings,
     };
   });
 
   const warningCount =
-    csv.errors.length +
+    parseErrors.length +
     unknownColumns.length +
+    duplicateHeaders.length +
     records.reduce((sum, record) => sum + record.warnings.length, 0);
 
   return {
@@ -204,7 +229,8 @@ export function parseStockyCsv({
     rowCount: records.length,
     warningCount,
     unknownColumns,
-    parseErrors: csv.errors,
+    parseErrors,
+    metadata,
     records,
   };
 }
@@ -227,6 +253,7 @@ export function normalizeHeader(header: string) {
 function detectReportType(filename: string, headers: string[]) {
   const name = filename.toLowerCase();
   const headerSet = new Set(headers);
+  const hasSkuColumn = FIELD_ALIASES.sku.some((alias) => headerSet.has(alias));
 
   if (
     name.includes("purchase") ||
@@ -271,9 +298,10 @@ function detectReportType(filename: string, headers: string[]) {
   }
 
   if (
-    name.includes("vendor") ||
-    name.includes("supplier") ||
-    (headerSet.has("supplier_name") && !headerSet.has("sku"))
+    !hasSkuColumn &&
+    (name.includes("vendor") ||
+      name.includes("supplier") ||
+      headerSet.has("supplier_name"))
   ) {
     return StockyReportType.VENDORS;
   }
@@ -282,7 +310,7 @@ function detectReportType(filename: string, headers: string[]) {
     name.includes("product") ||
     headerSet.has("product_name") ||
     headerSet.has("barcode") ||
-    headerSet.has("sku")
+    hasSkuColumn
   ) {
     return StockyReportType.PRODUCTS;
   }
@@ -315,12 +343,14 @@ function valueFor(
   aliases: readonly string[],
 ) {
   for (const alias of aliases) {
-    const sourceHeader = headerColumns.find(
+    const matchingColumns = headerColumns.filter(
       (column) => column.normalized === alias,
-    )?.rawKey;
+    );
 
-    if (sourceHeader && raw[sourceHeader]?.trim()) {
-      return raw[sourceHeader].trim();
+    for (const column of matchingColumns) {
+      if (raw[column.rawKey]?.trim()) {
+        return raw[column.rawKey].trim();
+      }
     }
   }
 
@@ -349,13 +379,81 @@ function buildHeaderColumns(headers: string[]): HeaderColumn[] {
 }
 
 function findDuplicateHeaders(headers: string[]) {
-  const counts = new Map<string, number>();
+  const counts = new Map<string, { count: number; display: string }>();
 
   for (const header of headers) {
-    counts.set(header, (counts.get(header) ?? 0) + 1);
+    const normalized = normalizeHeader(header);
+    const current = counts.get(normalized);
+    counts.set(normalized, {
+      count: (current?.count ?? 0) + 1,
+      display: current?.display ?? (header.trim() || "(blank header)"),
+    });
   }
 
   return [...counts.entries()]
-    .filter(([, count]) => count > 1)
-    .map(([header]) => header);
+    .filter(([, value]) => value.count > 1)
+    .map(([, value]) => value.display);
+}
+
+function isPlausibleNumber(value: string) {
+  let candidate = value.trim();
+
+  if (/^\(.*\)$/.test(candidate)) {
+    candidate = `-${candidate.slice(1, -1)}`;
+  }
+
+  candidate = candidate
+    .replace(/^[A-Z]{3}\s*/i, "")
+    .replace(/\s*[A-Z]{3}$/i, "")
+    .replace(/[$£€¥₹]/g, "")
+    .replace(/[\s']/g, "");
+
+  return [
+    /^[+-]?\d+$/,
+    /^[+-]?\d+[.,]\d+$/,
+    /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/,
+    /^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$/,
+  ].some((pattern) => pattern.test(candidate));
+}
+
+function isPlausibleDate(value: string) {
+  const candidate = value.trim();
+  const isoLike = candidate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(.*)$/);
+
+  if (isoLike) {
+    const validDate = isCalendarDate(
+      Number(isoLike[1]),
+      Number(isoLike[2]),
+      Number(isoLike[3]),
+    );
+    const suffix = isoLike[4].trim();
+    return validDate && (!suffix || Number.isFinite(Date.parse(candidate)));
+  }
+
+  const common = candidate.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/);
+  if (common) {
+    const year = Number(common[3]);
+    const fullYear = year < 100 ? 2000 + year : year;
+    const first = Number(common[1]);
+    const second = Number(common[2]);
+    return (
+      isCalendarDate(fullYear, first, second) ||
+      isCalendarDate(fullYear, second, first)
+    );
+  }
+
+  if (/^\d{1,5}(?:\.\d+)?$/.test(candidate)) {
+    const serial = Number(candidate);
+    return serial >= 1 && serial <= 100_000;
+  }
+
+  return /[a-z]/i.test(candidate) && Number.isFinite(Date.parse(candidate));
+}
+
+function isCalendarDate(year: number, month: number, day: number) {
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
 }

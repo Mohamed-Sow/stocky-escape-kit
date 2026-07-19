@@ -30,7 +30,10 @@ import {
   getExportFilename,
   getReviewKitFilename,
 } from "../app/lib/export-filenames";
-import { resolveRunHistoryPage } from "../app/lib/pagination";
+import {
+  resolveFindingsPage,
+  resolveRunHistoryPage,
+} from "../app/lib/pagination";
 import { generateReviewKit } from "../app/lib/review-kit.server";
 import { generateReviewerFixturePack } from "../app/lib/review-fixtures.server";
 import {
@@ -67,6 +70,7 @@ import {
   type PartnerBillingCheck,
 } from "../app/models/billing.server";
 import { importStockyCsvFiles } from "../app/lib/uploads.server";
+import { decodeStockyCsvBytes } from "../app/lib/text-decoding.server";
 import {
   normalizeHeader,
   parseStockyCsv,
@@ -107,6 +111,19 @@ test("migration run history pages remain bounded and reachable", () => {
   assert.equal(resolveRunHistoryPage("invalid", 75).page, 1);
 });
 
+test("finding result pages remain bounded and reachable", () => {
+  assert.deepEqual(resolveFindingsPage(null, 0), {
+    page: 1,
+    pageCount: 1,
+    pageSize: 100,
+    skip: 0,
+    total: 0,
+  });
+  assert.equal(resolveFindingsPage("2", 250).skip, 100);
+  assert.equal(resolveFindingsPage("99", 250).page, 3);
+  assert.equal(resolveFindingsPage("invalid", 250).page, 1);
+});
+
 test("export filenames identify the selected migration run", () => {
   const createdAt = new Date("2026-07-10T15:36:04.123Z");
 
@@ -132,7 +149,7 @@ test("public reviewer fixture pack contains exactly the ten canonical CSVs", asy
   assert.ok(filenames.includes("README.txt"));
   assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
   assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
-  assert.match(new TextDecoder().decode(archive["README.txt"]), /33 warnings/);
+  assert.match(new TextDecoder().decode(archive["README.txt"]), /34 warnings/);
   assert.match(
     readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
     /COPY --from=build \/app\/fixtures\/stocky \.\/fixtures\/stocky/,
@@ -239,6 +256,83 @@ test("CSV parser keeps physical source row numbers across blank and quoted lines
       { sourceRowNumber: 6, sku: "DEF" },
     ],
   );
+});
+
+test("Stocky CSV byte decoding preserves UTF-16 and Windows-1252 exports", () => {
+  const utf16le = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from("SKU,Title\nUTF16-1,Café\n", "utf16le"),
+  ]);
+  const windows1252 = Buffer.concat([
+    Buffer.from("SKU,Title\nWIN-1,Caf", "ascii"),
+    Buffer.from([0xe9]),
+    Buffer.from("\n", "ascii"),
+  ]);
+
+  assert.deepEqual(decodeStockyCsvBytes(utf16le), {
+    content: "SKU,Title\nUTF16-1,Café\n",
+    encoding: "utf-16le",
+  });
+  assert.deepEqual(decodeStockyCsvBytes(windows1252), {
+    content: "SKU,Title\nWIN-1,Café\n",
+    encoding: "windows-1252",
+  });
+});
+
+test("Stocky parser rejects empty bytes but accepts a real header-only export", () => {
+  const empty = parseStockyCsv({
+    filename: "empty.csv",
+    content: " \r\n\t",
+  });
+  const headerOnly = parseStockyCsv({
+    filename: "header-only.csv",
+    content: "SKU,Title,Vendor\n",
+  });
+
+  assert.deepEqual(empty.parseErrors, ["CSV does not contain a header row."]);
+  assert.deepEqual(headerOnly.parseErrors, []);
+  assert.equal(headerOnly.rowCount, 0);
+});
+
+test("Stocky parser flags malformed cost, quantity, and date evidence", () => {
+  const parsed = parseStockyCsv({
+    filename: "stocky-products.csv",
+    content: "SKU,Unit Cost,Qty,Date\nBAD-VALUES,not-money,twelve,2026-99-99",
+  });
+
+  assert.deepEqual(parsed.records[0].warnings, [
+    "invalid_cost",
+    "invalid_quantity",
+    "invalid_date",
+  ]);
+});
+
+test("duplicate normalized headers preserve every value and use the first nonblank match", () => {
+  const parsed = parseStockyCsv({
+    filename: "stocky-products.csv",
+    content: "SKU,sku,Title\n,SECOND-SKU,Duplicate header product",
+  });
+
+  assert.equal(parsed.records[0].sku, "SECOND-SKU");
+  assert.deepEqual(
+    (
+      parsed.records[0].normalizedPayload.meta as {
+        duplicateHeaders?: string[];
+      }
+    ).duplicateHeaders,
+    ["SKU"],
+  );
+  assert.equal(parsed.warningCount, 1);
+});
+
+test("supplier-named files with a SKU column remain product evidence", () => {
+  const parsed = parseStockyCsv({
+    filename: "supplier-custom-sku-report.csv",
+    content: "Supplier SKU,Supplier Name,Product Name\nSUP-1,Acme,Widget",
+  });
+
+  assert.equal(parsed.reportType, StockyReportType.PRODUCTS);
+  assert.equal(parsed.records[0].sku, "SUP-1");
 });
 
 test("Stocky parser detects product exports and preserves unknown columns", () => {
@@ -1192,7 +1286,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(result.importedRowCount, expectedImportedRows);
     assert.equal(result.importedRowCount, 38);
     assert.equal(result.warningCount, expectedWarnings);
-    assert.equal(result.warningCount, 33);
+    assert.equal(result.warningCount, 34);
 
     const [batch] = fakeDb.state.uploadBatches;
     assert.equal(batch.status, UploadBatchStatus.IMPORTED);
@@ -1205,7 +1299,8 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
         (file) =>
           typeof file.rawContentBase64 === "string" &&
           typeof file.contentSha256 === "string" &&
-          typeof file.rawContentByteLength === "number",
+          typeof file.rawContentByteLength === "number" &&
+          file.parseMetadata !== null,
       ),
       true,
     );
@@ -1332,7 +1427,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     const categories = new Set(
       fakeDb.state.auditFindings.map((finding) => finding.category),
     );
-    assert.equal(fakeDb.state.auditFindings.length, 54);
+    assert.equal(fakeDb.state.auditFindings.length, 57);
     for (const category of [
       FindingCategory.MISSING_SKU,
       FindingCategory.UNMATCHED_SHOPIFY_SKU,
@@ -1391,6 +1486,22 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(
       (stockyDuplicateFindings[0].source as { filename?: string }).filename,
       "stocky-products-edge-cases.csv",
+    );
+    assert.equal(
+      fakeDb.state.auditFindings.some(
+        (finding) =>
+          finding.category === FindingCategory.PARSE_ERROR &&
+          finding.title === "CSV contains duplicate header names",
+      ),
+      true,
+    );
+    assert.equal(
+      fakeDb.state.auditFindings.some(
+        (finding) =>
+          finding.category === FindingCategory.PARSE_ERROR &&
+          finding.title === "CSV rows have a different column count",
+      ),
+      true,
     );
     const openPurchaseOrderFindings = fakeDb.state.auditFindings.filter(
       (finding) =>
@@ -1457,7 +1568,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     });
     assert.ok(
       supplier.body.startsWith(
-        "sku,title,supplier_hint,vendor_hint,source_file,source_row,stocky_reference,recommended_action",
+        "sku,title,supplier_hint,vendor_hint,source_file,source_row,stocky_reference,stocky_status,stocky_quantity,stocky_unit_cost,stocky_location,stocky_date,recommended_action",
       ),
     );
     assert.match(supplier.body, /SUP-REF-771/);
@@ -1660,6 +1771,105 @@ test("header-only Stocky exports remain preserved as successful empty evidence",
   }
 });
 
+test("header-only files retain file-level unknown and duplicate-column findings", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("header-metadata-stocky-dev.myshopify.com");
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(
+          ["SKU,sku,Custom Evidence\n"],
+          "header-metadata-products.csv",
+          { type: "text/csv" },
+        ),
+      ],
+    });
+
+    assert.equal(result.importedRowCount, 0);
+    assert.equal(result.failedFileCount, 0);
+    assert.equal(result.warningCount, 2);
+    assert.deepEqual(
+      fakeDb.state.auditFindings.map((finding) => finding.title).sort(),
+      [
+        "CSV contains duplicate header names",
+        "CSV contains unrecognized columns",
+      ],
+    );
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("whitespace-only uploads fail while preserving their original bytes", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("blank-evidence-stocky-dev.myshopify.com");
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [new File([" \r\n\t"], "blank.csv", { type: "text/csv" })],
+    });
+
+    assert.equal(result.importedRowCount, 0);
+    assert.equal(result.failedFileCount, 1);
+    assert.equal(
+      fakeDb.state.uploadBatches[0]?.status,
+      UploadBatchStatus.FAILED,
+    );
+    assert.equal(
+      fakeDb.state.uploadedFiles[0]?.parseStatus,
+      FileParseStatus.FAILED,
+    );
+    assert.match(
+      fakeDb.state.uploadedFiles[0]?.errorMessage ?? "",
+      /header row/,
+    );
+    assert.equal(
+      Buffer.from(
+        fakeDb.state.uploadedFiles[0]?.rawContentBase64 ?? "",
+        "base64",
+      ).toString("utf8"),
+      " \r\n\t",
+    );
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("invalid normalized values become visible parser findings", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("invalid-values-stocky-dev.myshopify.com");
+
+  try {
+    await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(
+          [
+            "SKU,Unit Cost,Qty,Date\n",
+            "BAD-VALUES,not-money,twelve,2026-99-99\n",
+          ],
+          "invalid-products.csv",
+          { type: "text/csv" },
+        ),
+      ],
+    });
+
+    const titles = fakeDb.state.auditFindings
+      .filter((finding) => finding.category === FindingCategory.PARSE_ERROR)
+      .map((finding) => finding.title);
+    assert.deepEqual(titles.sort(), [
+      "Cost values could not be interpreted",
+      "Date values could not be interpreted",
+      "Quantity values could not be interpreted",
+    ]);
+  } finally {
+    fakeDb.restore();
+  }
+});
+
 test("in-transit Stocky purchase orders remain visible as cutover work", async () => {
   const fakeDb = installInMemoryPrisma();
   const store = fakeDb.createStore("in-transit-stocky-dev.myshopify.com");
@@ -1834,6 +2044,7 @@ type UploadedFileRow = {
   contentSha256: string | null;
   rawContentBase64: string | null;
   rawContentByteLength: number | null;
+  parseMetadata: Prisma.JsonValue | null;
   rowCount: number;
   warningCount: number;
   errorMessage: string | null;
@@ -1969,6 +2180,7 @@ type UploadedFileCreateArgs = {
     contentSha256?: string;
     rawContentBase64?: string | null;
     rawContentByteLength?: number | null;
+    parseMetadata?: Prisma.InputJsonValue;
     rowCount?: number;
     warningCount?: number;
     errorMessage?: string | null;
@@ -2294,6 +2506,10 @@ function installInMemoryPrisma() {
         contentSha256: data.contentSha256 ?? null,
         rawContentBase64: data.rawContentBase64 ?? null,
         rawContentByteLength: data.rawContentByteLength ?? null,
+        parseMetadata:
+          data.parseMetadata === undefined
+            ? null
+            : (data.parseMetadata as Prisma.JsonValue),
         rowCount: data.rowCount ?? 0,
         warningCount: data.warningCount ?? 0,
         errorMessage: data.errorMessage ?? null,

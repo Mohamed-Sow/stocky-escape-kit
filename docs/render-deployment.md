@@ -36,6 +36,12 @@ temporary operator connection is required for a smoke test, allow only that
 operator's current `/32` address and remove it afterward. A database password is
 not a substitute for restricting the public network path.
 
+Render workspace network rules can override the database's Blueprint
+`ipAllowList`. If the database **Inbound IP Restrictions** panel says it is
+"Affected by: Workspace," open the linked workspace rule list and remove any
+`0.0.0.0/0` entry there as well. Updating `render.yaml` alone does not remove an
+already inherited workspace-wide rule.
+
 ## Initial provisioning reference
 
 These steps are retained only for disaster recovery or a genuinely new Render

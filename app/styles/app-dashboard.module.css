@@ -386,9 +386,10 @@ td small {
   padding-left: 12px;
 }
 .filters {
+  align-items: end;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(220px, 1fr) 180px 240px;
+  grid-template-columns: minmax(220px, 1fr) 160px 220px auto;
   margin-bottom: 16px;
 }
 .filters label,
@@ -398,6 +399,11 @@ td small {
   font-size: 12px;
   font-weight: 650;
   gap: 5px;
+}
+.filterActions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
 }
 .findingList {
   display: grid;

@@ -22,7 +22,7 @@ import {
   useNavigation,
   useParams,
 } from "react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import db from "../db.server";
 import { regenerateAuditFindings } from "../lib/audit.server";
 import {
@@ -48,7 +48,7 @@ import {
   RequestSizeLimitError,
   readFormDataWithinLimit,
 } from "../lib/request-size.server";
-import { resolveRunHistoryPage } from "../lib/pagination";
+import { resolveFindingsPage, resolveRunHistoryPage } from "../lib/pagination";
 import { importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
@@ -96,7 +96,6 @@ const FINDING_CATEGORIES = [
   "PARSE_ERROR",
 ] as const satisfies readonly FindingCategory[];
 
-const FINDING_DISPLAY_LIMIT = 500;
 const DISPLAY_ACRONYMS = new Set([
   "api",
   "csv",
@@ -203,24 +202,49 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const displaySnapshot = selectedBatch
     ? selectedBatch.auditSnapshot
     : latestSyncAttempt;
-  const findingWhere: Prisma.AuditFindingWhereInput = {
+  const findingSeverity = FINDING_SEVERITIES.find(
+    (severity) => severity === url.searchParams.get("findingSeverity"),
+  );
+  const findingCategory = FINDING_CATEGORIES.find(
+    (category) => category === url.searchParams.get("findingCategory"),
+  );
+  const findingQuery = (url.searchParams.get("findingQuery") ?? "")
+    .trim()
+    .slice(0, 120);
+  const baseFindingWhere: Prisma.AuditFindingWhereInput = {
     storeId: store.id,
     batchId: selectedBatch?.id ?? "__no_batch__",
     category: billingAccess.entitlements.locationAudit
       ? undefined
       : { not: "LOCATION_MISMATCH" },
   };
-  const [findingGroups, findings, exportJobs] = await Promise.all([
+  const filteredFindingWhere: Prisma.AuditFindingWhereInput = {
+    ...baseFindingWhere,
+    ...(findingSeverity ? { severity: findingSeverity } : {}),
+    ...(findingCategory ? { category: findingCategory } : {}),
+    ...(findingQuery
+      ? {
+          OR: [
+            { sku: { contains: findingQuery, mode: "insensitive" } },
+            { title: { contains: findingQuery, mode: "insensitive" } },
+            { message: { contains: findingQuery, mode: "insensitive" } },
+            {
+              recommendedAction: {
+                contains: findingQuery,
+                mode: "insensitive",
+              },
+            },
+          ],
+        }
+      : {}),
+  };
+  const [findingGroups, filteredFindingTotal, exportJobs] = await Promise.all([
     db.auditFinding.groupBy({
       by: ["severity", "category"],
-      where: findingWhere,
+      where: baseFindingWhere,
       _count: { _all: true },
     }),
-    db.auditFinding.findMany({
-      where: findingWhere,
-      orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
-      take: FINDING_DISPLAY_LIMIT,
-    }),
+    db.auditFinding.count({ where: filteredFindingWhere }),
     db.exportJob.findMany({
       where: selectedBatch
         ? { storeId: store.id, batchId: selectedBatch.id }
@@ -229,6 +253,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       take: 20,
     }),
   ]);
+  const findingResults = resolveFindingsPage(
+    url.searchParams.get("findingsPage"),
+    filteredFindingTotal,
+  );
+  const findings = await db.auditFinding.findMany({
+    where: filteredFindingWhere,
+    orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
+    skip: findingResults.skip,
+    take: findingResults.pageSize,
+  });
   const severityCounts = { CRITICAL: 0, WARNING: 0, INFO: 0 };
 
   for (const group of findingGroups) {
@@ -281,6 +315,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null,
     severityCounts,
     findingTotal,
+    findingFilters: {
+      severity: findingSeverity ?? "ALL",
+      category: findingCategory ?? "ALL",
+      query: findingQuery,
+    },
+    findingResults,
     findingGroups: findingGroups.map((group) => ({
       severity: group.severity,
       category: group.category,
@@ -1149,27 +1189,6 @@ function FilesTable({ files }: { files: SerializedBatch["files"] }) {
 }
 
 function Findings({ data, selectedBatchId }: ViewProps) {
-  const [severity, setSeverity] = useState("ALL");
-  const [category, setCategory] = useState("ALL");
-  const [query, setQuery] = useState("");
-  const filtered = useMemo(
-    () =>
-      data.findings.filter((finding) => {
-        const matchesSeverity =
-          severity === "ALL" || finding.severity === severity;
-        const matchesCategory =
-          category === "ALL" || finding.category === category;
-        const haystack =
-          `${finding.sku ?? ""} ${finding.title} ${finding.message} ${finding.recommendedAction}`.toLowerCase();
-        return (
-          matchesSeverity &&
-          matchesCategory &&
-          haystack.includes(query.trim().toLowerCase())
-        );
-      }),
-    [category, data.findings, query, severity],
-  );
-
   return (
     <div className={styles.stack}>
       <section className={styles.metricGrid}>
@@ -1196,24 +1215,39 @@ function Findings({ data, selectedBatchId }: ViewProps) {
             <h3>Audit findings</h3>
           </div>
           <span className={styles.countLabel}>
-            {filtered.length} shown of {data.findingTotal}
+            {data.findings.length} shown of {data.findingResults.total}
+            {data.findingResults.total !== data.findingTotal
+              ? ` matching · ${data.findingTotal} total`
+              : ""}
           </span>
         </div>
-        <div className={styles.filters}>
+        <Form
+          key={`${data.findingFilters.query}|${data.findingFilters.severity}|${data.findingFilters.category}`}
+          method="get"
+          className={styles.filters}
+          aria-label="Filter findings"
+        >
+          {selectedBatchId ? (
+            <input type="hidden" name="batch" value={selectedBatchId} />
+          ) : null}
+          {data.runHistory.page > 1 ? (
+            <input type="hidden" name="runsPage" value={data.runHistory.page} />
+          ) : null}
           <label>
             Search
             <input
               type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              name="findingQuery"
+              defaultValue={data.findingFilters.query}
               placeholder="SKU, issue, or action"
+              maxLength={120}
             />
           </label>
           <label>
             Severity
             <select
-              value={severity}
-              onChange={(event) => setSeverity(event.target.value)}
+              name="findingSeverity"
+              defaultValue={data.findingFilters.severity}
             >
               <option value="ALL">All severities</option>
               {FINDING_SEVERITIES.map((item) => (
@@ -1226,8 +1260,8 @@ function Findings({ data, selectedBatchId }: ViewProps) {
           <label>
             Category
             <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
+              name="findingCategory"
+              defaultValue={data.findingFilters.category}
             >
               <option value="ALL">All categories</option>
               {FINDING_CATEGORIES.filter(
@@ -1241,21 +1275,24 @@ function Findings({ data, selectedBatchId }: ViewProps) {
               ))}
             </select>
           </label>
-        </div>
-        {data.findingTotal > data.findings.length ? (
-          <p className={styles.inlineNotice}>
-            To keep this page responsive, it shows the first{" "}
-            {data.findings.length.toLocaleString()} findings, ordered by
-            severity. Download the complete audit findings CSV for every finding
-            in this run.
-          </p>
-        ) : null}
+          <div className={styles.filterActions}>
+            <button className={styles.secondaryButton} type="submit">
+              Apply filters
+            </button>
+            <Link
+              className={styles.textButton}
+              to={viewHref("findings", selectedBatchId, data.runHistory.page)}
+            >
+              Clear
+            </Link>
+          </div>
+        </Form>
         {!selectedBatchId ? (
           <EmptyState
             title="No run selected"
             detail="Choose a migration run to see its findings."
           />
-        ) : data.findings.length === 0 ? (
+        ) : data.findingTotal === 0 ? (
           <EmptyState
             title="No audit findings"
             detail={
@@ -1264,9 +1301,9 @@ function Findings({ data, selectedBatchId }: ViewProps) {
                 : "No file-level findings were found. Sync Shopify from Files to generate catalog-matching findings."
             }
           />
-        ) : filtered.length ? (
+        ) : data.findingResults.total > 0 ? (
           <div className={styles.findingList}>
-            {filtered.map((finding) => (
+            {data.findings.map((finding) => (
               <article className={styles.finding} key={finding.id}>
                 <div className={styles.findingMeta}>
                   <StatusPill value={finding.severity} />
@@ -1289,6 +1326,39 @@ function Findings({ data, selectedBatchId }: ViewProps) {
             detail="Clear a filter or search term to see the full audit."
           />
         )}
+        {data.findingResults.pageCount > 1 ? (
+          <nav className={styles.historyPagination} aria-label="Finding pages">
+            <span>
+              Page {data.findingResults.page} of {data.findingResults.pageCount}
+            </span>
+            <div>
+              {data.findingResults.page > 1 ? (
+                <Link
+                  className={styles.secondaryButton}
+                  to={findingHref(
+                    data,
+                    selectedBatchId,
+                    data.findingResults.page - 1,
+                  )}
+                >
+                  Previous
+                </Link>
+              ) : null}
+              {data.findingResults.page < data.findingResults.pageCount ? (
+                <Link
+                  className={styles.secondaryButton}
+                  to={findingHref(
+                    data,
+                    selectedBatchId,
+                    data.findingResults.page + 1,
+                  )}
+                >
+                  Next
+                </Link>
+              ) : null}
+            </div>
+          </nav>
+        ) : null}
       </section>
     </div>
   );
@@ -1680,13 +1750,17 @@ function SourceContext({ source }: { source: unknown }) {
         (item): item is number => typeof item === "number",
       )
     : [];
+  const affectedRowCount =
+    typeof value.affectedRowCount === "number"
+      ? value.affectedRowCount
+      : rows.length;
   if (!filename && !row && rows.length === 0) return null;
   return (
     <p className={styles.source}>
       Source: {filename ?? "Stocky export"}
       {row ? ` · row ${row}` : ""}
       {rows.length > 0
-        ? ` · rows ${rows.slice(0, 8).join(", ")}${rows.length > 8 ? ` (+${rows.length - 8} more)` : ""}`
+        ? ` · rows ${rows.slice(0, 8).join(", ")}${affectedRowCount > 8 ? ` (+${affectedRowCount - 8} more)` : ""}`
         : ""}
     </p>
   );
@@ -1801,6 +1875,25 @@ function viewHref(view: View, batchId: string | null, runsPage = 1) {
   if (runsPage > 1) params.set("runsPage", String(runsPage));
   const query = params.size ? `?${params}` : "";
   return `/app/${view}${query}`;
+}
+function findingHref(data: LoaderData, batchId: string | null, page: number) {
+  const params = new URLSearchParams();
+  if (batchId) params.set("batch", batchId);
+  if (data.runHistory.page > 1) {
+    params.set("runsPage", String(data.runHistory.page));
+  }
+  if (data.findingFilters.query) {
+    params.set("findingQuery", data.findingFilters.query);
+  }
+  if (data.findingFilters.severity !== "ALL") {
+    params.set("findingSeverity", data.findingFilters.severity);
+  }
+  if (data.findingFilters.category !== "ALL") {
+    params.set("findingCategory", data.findingFilters.category);
+  }
+  if (page > 1) params.set("findingsPage", String(page));
+  const query = params.size ? `?${params}` : "";
+  return `/app/findings${query}`;
 }
 function viewLabel(view: View) {
   return view.charAt(0).toUpperCase() + view.slice(1);

@@ -350,6 +350,11 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
         "source_file",
         "source_row",
         "stocky_reference",
+        "stocky_status",
+        "stocky_quantity",
+        "stocky_unit_cost",
+        "stocky_location",
+        "stocky_date",
         "recommended_action",
       ],
     ]),
@@ -393,6 +398,11 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
           supplier,
           vendor,
           reference: normalized.reference ?? "",
+          status: normalized.status ?? "",
+          quantity: normalized.quantity ?? "",
+          cost: normalized.cost ?? "",
+          location: normalized.location ?? "",
+          date: normalized.date ?? "",
         };
       })
       .filter((row) => row.supplier || row.vendor);
@@ -408,6 +418,11 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
             row.file,
             String(row.row),
             row.reference,
+            row.status,
+            row.quantity,
+            row.cost,
+            row.location,
+            row.date,
             row.supplier
               ? "Use as evidence when recreating suppliers in Shopify. Supplier records cannot be exported directly from Stocky."
               : "Vendor-only lead: confirm against purchase orders or custom SKU reports before recreating a supplier.",

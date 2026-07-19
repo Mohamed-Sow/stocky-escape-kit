@@ -28,8 +28,12 @@ type NormalizedPayload = {
   };
   meta?: {
     unknownColumns?: string[];
+    duplicateHeaders?: string[];
+    sourceEncoding?: string;
   };
 };
+
+type FileParseMetadata = NonNullable<NormalizedPayload["meta"]>;
 
 type PendingFinding = {
   severity: FindingSeverity;
@@ -73,6 +77,7 @@ export async function regenerateAuditFindings({
             detectedReportType: true,
             parseStatus: true,
             errorMessage: true,
+            parseMetadata: true,
           },
         },
       },
@@ -102,11 +107,12 @@ export async function regenerateAuditFindings({
   const pending = new Map<string, PendingFinding>();
 
   for (const file of batch.uploadedFiles) {
-    const missingSkuRows: number[] = [];
+    const missingSku = { count: 0, rows: [] as number[] };
     const productSkuCounts = new Map<
       string,
       { displaySku: string; count: number }
     >();
+    const parserWarnings = new Map<string, { count: number; rows: number[] }>();
     const openPurchaseOrders = new Map<
       string,
       {
@@ -114,6 +120,16 @@ export async function regenerateAuditFindings({
         statuses: Set<string>;
         sourceRowNumbers: number[];
         skus: Set<string>;
+        lineCount: number;
+        lineEvidence: Array<{
+          sourceRowNumber: number;
+          sku: string | null;
+          status: string | null;
+          quantity: string | null;
+          cost: string | null;
+          location: string | null;
+          date: string | null;
+        }>;
       }
     >();
 
@@ -133,35 +149,46 @@ export async function regenerateAuditFindings({
       });
     }
 
-    let recordedUnknownColumns = false;
+    const storedFileMetadata = readFileMetadata(file.parseMetadata);
+    let recordedFileMetadata = Boolean(storedFileMetadata);
+
+    if (storedFileMetadata) {
+      addFileMetadataFindings(
+        pending,
+        file.id,
+        file.originalFilename,
+        storedFileMetadata,
+      );
+    }
 
     for await (const record of iterateParsedRecords(file.id)) {
-      if (!recordedUnknownColumns) {
-        const unknownColumns = readUnknownColumns(record.normalizedPayload);
+      const payload = readPayload(record.normalizedPayload);
 
-        if (unknownColumns.length > 0) {
-          addFinding(pending, {
-            severity: FindingSeverity.INFO,
-            category: FindingCategory.PARSE_ERROR,
-            sku: null,
-            title: "CSV contains unrecognized columns",
-            message: `${file.originalFilename}: ${unknownColumns.join(", ")}`,
-            recommendedAction:
-              "Download the preserved raw CSV if you need the original evidence. Unrecognized columns are preserved in parsed row payloads but are not used for matching.",
-            source: {
-              fileId: file.id,
-              filename: file.originalFilename,
-              unknownColumns,
-            },
-          });
+      if (!recordedFileMetadata) {
+        if (payload.meta) {
+          addFileMetadataFindings(
+            pending,
+            file.id,
+            file.originalFilename,
+            payload.meta,
+          );
         }
 
-        recordedUnknownColumns = true;
+        recordedFileMetadata = true;
       }
 
-      const payload = readPayload(record.normalizedPayload);
       const normalized = payload.normalized ?? {};
       const sku = record.sku?.trim() || normalized.sku?.trim() || null;
+
+      for (const warning of readWarnings(record.warnings)) {
+        if (warning === "missing_sku") continue;
+        const current = parserWarnings.get(warning) ?? { count: 0, rows: [] };
+        current.count += 1;
+        if (current.rows.length < 200) {
+          current.rows.push(record.sourceRowNumber);
+        }
+        parserWarnings.set(warning, current);
+      }
 
       if (sku && file.detectedReportType === StockyReportType.PRODUCTS) {
         const key = sku.toLowerCase();
@@ -209,17 +236,36 @@ export async function regenerateAuditFindings({
           statuses: new Set<string>(),
           sourceRowNumbers: [],
           skus: new Set<string>(),
+          lineCount: 0,
+          lineEvidence: [],
         };
 
         purchaseOrder.statuses.add(normalized.status?.trim() || "unknown");
-        purchaseOrder.sourceRowNumbers.push(record.sourceRowNumber);
+        purchaseOrder.lineCount += 1;
+        if (purchaseOrder.sourceRowNumbers.length < 200) {
+          purchaseOrder.sourceRowNumbers.push(record.sourceRowNumber);
+        }
         if (sku) purchaseOrder.skus.add(sku);
+        if (purchaseOrder.lineEvidence.length < 200) {
+          purchaseOrder.lineEvidence.push({
+            sourceRowNumber: record.sourceRowNumber,
+            sku,
+            status: normalized.status?.trim() || null,
+            quantity: normalized.quantity?.trim() || null,
+            cost: normalized.cost?.trim() || null,
+            location: normalized.location?.trim() || null,
+            date: normalized.date?.trim() || null,
+          });
+        }
         openPurchaseOrders.set(key, purchaseOrder);
       }
 
       if (!sku) {
         if (reportRequiresSku(file.detectedReportType)) {
-          missingSkuRows.push(record.sourceRowNumber);
+          missingSku.count += 1;
+          if (missingSku.rows.length < 200) {
+            missingSku.rows.push(record.sourceRowNumber);
+          }
         }
 
         continue;
@@ -340,23 +386,45 @@ export async function regenerateAuditFindings({
       }
     }
 
-    if (missingSkuRows.length > 0) {
-      const sample = missingSkuRows.slice(0, 8).join(", ");
-      const remainder =
-        missingSkuRows.length - Math.min(8, missingSkuRows.length);
+    for (const [warning, affected] of parserWarnings) {
+      const copy = parserWarningCopy(warning);
+      const sample = affected.rows.slice(0, 8).join(", ");
+      const remainder = affected.count - Math.min(8, affected.count);
+
+      addFinding(pending, {
+        severity: FindingSeverity.WARNING,
+        category: FindingCategory.PARSE_ERROR,
+        sku: null,
+        title: copy.title,
+        message: `${file.originalFilename} has ${affected.count} affected row${affected.count === 1 ? "" : "s"} (${sample}${remainder > 0 ? `, plus ${remainder} more` : ""}).`,
+        recommendedAction: copy.recommendedAction,
+        source: {
+          fileId: file.id,
+          filename: file.originalFilename,
+          parserWarning: warning,
+          affectedRowCount: affected.count,
+          sourceRowNumbers: affected.rows,
+        },
+      });
+    }
+
+    if (missingSku.count > 0) {
+      const sample = missingSku.rows.slice(0, 8).join(", ");
+      const remainder = missingSku.count - Math.min(8, missingSku.count);
 
       addFinding(pending, {
         severity: FindingSeverity.CRITICAL,
         category: FindingCategory.MISSING_SKU,
         sku: null,
         title: "Source file contains rows without SKUs",
-        message: `${file.originalFilename} has ${missingSkuRows.length} row${missingSkuRows.length === 1 ? "" : "s"} that cannot be matched to Shopify without a SKU (row${missingSkuRows.length === 1 ? "" : "s"} ${sample}${remainder > 0 ? `, plus ${remainder} more` : ""}).`,
+        message: `${file.originalFilename} has ${missingSku.count} row${missingSku.count === 1 ? "" : "s"} that cannot be matched to Shopify without a SKU (row${missingSku.count === 1 ? "" : "s"} ${sample}${remainder > 0 ? `, plus ${remainder} more` : ""}).`,
         recommendedAction:
           "Recover the missing SKUs or preserve these rows for manual review before relying on SKU-level migration results.",
         source: {
           fileId: file.id,
           filename: file.originalFilename,
-          sourceRowNumbers: missingSkuRows,
+          affectedRowCount: missingSku.count,
+          sourceRowNumbers: missingSku.rows,
         },
       });
     }
@@ -394,15 +462,19 @@ export async function regenerateAuditFindings({
         category: FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
         sku: null,
         title: "Stocky purchase order may still need action",
-        message: `${reference} has ${purchaseOrder.sourceRowNumbers.length} preserved row${purchaseOrder.sourceRowNumbers.length === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.`,
+        message: `${reference} has ${purchaseOrder.lineCount} preserved row${purchaseOrder.lineCount === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.`,
         recommendedAction:
           "Receive and close this order before cutover when possible. If it remains open, recreate only its remaining quantities in Shopify; historical Stocky purchase orders cannot be imported.",
         source: {
           fileId: file.id,
           filename: file.originalFilename,
           reference: purchaseOrder.reference,
+          affectedRowCount: purchaseOrder.lineCount,
           sourceRowNumbers: purchaseOrder.sourceRowNumbers,
           skus: [...purchaseOrder.skus],
+          statuses: [...purchaseOrder.statuses],
+          lineCount: purchaseOrder.lineCount,
+          lineEvidence: purchaseOrder.lineEvidence,
         },
       });
     }
@@ -448,6 +520,7 @@ type ParsedRecordAuditPage = {
   sku: string | null;
   sourceRowNumber: number;
   normalizedPayload: Prisma.JsonValue;
+  warnings: Prisma.JsonValue;
 };
 
 async function* iterateParsedRecords(
@@ -467,6 +540,7 @@ async function* iterateParsedRecords(
         sku: true,
         sourceRowNumber: true,
         normalizedPayload: true,
+        warnings: true,
       },
     });
 
@@ -513,15 +587,103 @@ function readPayload(value: Prisma.JsonValue): NormalizedPayload {
   return value as NormalizedPayload;
 }
 
-function readUnknownColumns(value: Prisma.JsonValue | undefined) {
-  if (!value) {
-    return [];
+function readFileMetadata(
+  value: Prisma.JsonValue | null | undefined,
+): FileParseMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
   }
 
-  const payload = readPayload(value);
-  return Array.isArray(payload.meta?.unknownColumns)
-    ? payload.meta.unknownColumns
+  return value as FileParseMetadata;
+}
+
+function addFileMetadataFindings(
+  findings: Map<string, PendingFinding>,
+  fileId: string,
+  filename: string,
+  metadata: FileParseMetadata,
+) {
+  const unknownColumns = Array.isArray(metadata.unknownColumns)
+    ? metadata.unknownColumns
     : [];
+  const duplicateHeaders = Array.isArray(metadata.duplicateHeaders)
+    ? metadata.duplicateHeaders
+    : [];
+
+  if (unknownColumns.length > 0) {
+    addFinding(findings, {
+      severity: FindingSeverity.INFO,
+      category: FindingCategory.PARSE_ERROR,
+      sku: null,
+      title: "CSV contains unrecognized columns",
+      message: `${filename}: ${unknownColumns.join(", ")}`,
+      recommendedAction:
+        "Download the preserved raw CSV if you need the original evidence. Unrecognized columns are preserved in parsed row payloads but are not used for matching.",
+      source: {
+        fileId,
+        filename,
+        unknownColumns,
+      },
+    });
+  }
+
+  if (duplicateHeaders.length > 0) {
+    addFinding(findings, {
+      severity: FindingSeverity.WARNING,
+      category: FindingCategory.PARSE_ERROR,
+      sku: null,
+      title: "CSV contains duplicate header names",
+      message: `${filename}: ${duplicateHeaders.join(", ")}. Values from every duplicate column were preserved, but duplicate labels can make a source export ambiguous.`,
+      recommendedAction:
+        "Confirm which duplicate column is authoritative before relying on normalized values. Download the preserved raw CSV to compare every original column.",
+      source: {
+        fileId,
+        filename,
+        duplicateHeaders,
+      },
+    });
+  }
+}
+
+function readWarnings(value: Prisma.JsonValue) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function parserWarningCopy(warning: string) {
+  switch (warning) {
+    case "column_count_mismatch":
+      return {
+        title: "CSV rows have a different column count",
+        recommendedAction:
+          "Compare the affected rows with the preserved raw CSV. Re-export the source report if values shifted into the wrong columns.",
+      };
+    case "invalid_cost":
+      return {
+        title: "Cost values could not be interpreted",
+        recommendedAction:
+          "Correct or confirm the affected Stocky cost values before using them as migration evidence.",
+      };
+    case "invalid_quantity":
+      return {
+        title: "Quantity values could not be interpreted",
+        recommendedAction:
+          "Correct or confirm the affected Stocky quantities before recreating purchasing or inventory work.",
+      };
+    case "invalid_date":
+      return {
+        title: "Date values could not be interpreted",
+        recommendedAction:
+          "Correct or confirm the affected Stocky dates before using them to plan cutover work.",
+      };
+    default:
+      return {
+        title: "CSV rows need parser review",
+        recommendedAction:
+          "Compare the affected rows with the preserved raw CSV before relying on normalized values.",
+      };
+  }
 }
 
 function sourceFor(

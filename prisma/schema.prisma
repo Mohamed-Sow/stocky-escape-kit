@@ -86,6 +86,7 @@ model UploadedFile {
   contentSha256        String?
   rawContentBase64     String?
   rawContentByteLength Int?
+  parseMetadata        Json?
   rowCount             Int              @default(0)
   warningCount         Int              @default(0)
   errorMessage         String?
