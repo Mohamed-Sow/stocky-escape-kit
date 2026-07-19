@@ -546,7 +546,7 @@ async function buildMigrationChecklistCsv(
       "Upload Stocky CSV exports",
       parsedFileCount > 0 ? "done" : "needed",
       `${parsedFileCount} successfully parsed source file${parsedFileCount === 1 ? "" : "s"}, ${recordCount} parsed row${recordCount === 1 ? "" : "s"}`,
-      "Preserve completed purchase orders, stocktake history, and historical costs. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
+      "Preserve completed purchase orders, stocktake history, and historical stock-on-hand or cost reports. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
     ],
     [
       "high",

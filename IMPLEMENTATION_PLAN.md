@@ -8,7 +8,7 @@ Build a Shopify-only public app that helps merchants preserve raw Stocky CSV exp
 
 - Scaffold a new Shopify app in this folder using the official React Router/Remix-style Shopify app template, TypeScript, Prisma, PostgreSQL, Polaris, App Bridge, and GraphQL Admin API.
 - Implement OAuth install, embedded admin shell, Shopify App Pricing, uninstall cleanup, GDPR webhooks, and minimal scopes: `read_products`, `read_inventory`, `read_locations`.
-- Add CSV upload flow for Stocky purchase orders, stocktakes, historical cost data, inventory activity, product/custom SKU reports, and any supplier evidence the merchant can preserve. Do not imply that Stocky supplier records can be exported directly.
+- Add CSV upload flow for Stocky purchase orders, stocktakes, historical stock-on-hand or cost data, inventory activity, product/custom SKU reports, and any supplier evidence the merchant can preserve. Do not imply that Stocky supplier records can be exported directly.
 - Build parser and normalizer modules that record upload batch, source file, parsed rows, parse warnings, unknown columns, and row-level validation issues.
 - Use fully cursor-paginated Shopify GraphQL queries to fetch products, variants, inventory items, locations, SKUs, barcodes, vendor, and cost-related fields available to the app. Fail closed at the configured safety limit rather than auditing a partial catalog.
 - Create audit reports for unmatched SKUs, duplicate SKUs, missing cost, missing barcode, missing vendor, location mismatches, open purchase order indicators, and supplier reconstruction candidates.

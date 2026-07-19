@@ -17,7 +17,7 @@ const REPORT_LABELS: Record<StockySourceReportType, string> = {
   PRODUCTS: "products or custom SKUs",
   PURCHASE_ORDERS: "purchase orders",
   STOCKTAKES: "stocktakes",
-  HISTORICAL_COSTS: "historical costs",
+  HISTORICAL_COSTS: "historical stock-on-hand or cost reports",
   INVENTORY_ACTIVITY: "inventory activity",
 };
 

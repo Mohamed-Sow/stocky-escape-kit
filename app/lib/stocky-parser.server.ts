@@ -54,6 +54,7 @@ const FIELD_ALIASES = {
     "upc_ean",
     "ean_upc",
   ],
+  shopifyId: ["shopify_id", "shopify_product_id", "shopify_variant_id"],
   vendor: ["vendor", "vendor_name", "brand", "product_vendor"],
   supplier: [
     "supplier",
@@ -69,6 +70,7 @@ const FIELD_ALIASES = {
     "warehouse",
     "receive_location",
     "destination",
+    "origin",
     "from_location",
     "to_location",
   ],
@@ -82,6 +84,18 @@ const FIELD_ALIASES = {
     "avg_cost",
     "landed_cost",
     "unit_price",
+    "total_cost",
+  ],
+  retailValue: [
+    "retail_price",
+    "retail_value",
+    "total_retail",
+    "stock_value",
+  ],
+  adjustmentCost: [
+    "adjustment_cost",
+    "adjustment_total_cost",
+    "total_adjustment_cost",
   ],
   quantity: [
     "quantity",
@@ -103,6 +117,8 @@ const FIELD_ALIASES = {
     "adjustment",
     "quantity_change",
     "adjustment_total",
+    "total_items",
+    "total_quantity",
   ],
   status: [
     "status",
@@ -139,6 +155,8 @@ const FIELD_ALIASES = {
     "stocktake_number",
     "transfer_number",
   ],
+  reason: ["reason", "adjustment_reason", "transfer_reason"],
+  employee: ["employee", "staff", "staff_name", "employee_name"],
 } as const;
 
 const KNOWN_COLUMNS: Set<string> = new Set(Object.values(FIELD_ALIASES).flat());
@@ -238,6 +256,7 @@ export function parseStockyCsv({
 export function reportRequiresSku(reportType: StockyReportType) {
   return (
     reportType !== StockyReportType.VENDORS &&
+    reportType !== StockyReportType.HISTORICAL_COSTS &&
     reportType !== StockyReportType.UNKNOWN
   );
 }
@@ -252,12 +271,19 @@ export function normalizeHeader(header: string) {
 
 function detectReportType(filename: string, headers: string[]) {
   const name = filename.toLowerCase();
+  const normalizedName = normalizeHeader(name.replace(/\.[^.]+$/, ""));
   const headerSet = new Set(headers);
   const hasSkuColumn = FIELD_ALIASES.sku.some((alias) => headerSet.has(alias));
+  const hasDateColumn = FIELD_ALIASES.date.some((alias) =>
+    headerSet.has(alias),
+  );
+  const hasHistoricalFilename =
+    normalizedName.includes("historical") ||
+    normalizedName.includes("history");
 
   if (
     name.includes("purchase") ||
-    name.includes("po_") ||
+    /(^|_)po(_|$)/.test(normalizedName) ||
     headerSet.has("po") ||
     headerSet.has("p_o") ||
     headerSet.has("purchase_order") ||
@@ -270,29 +296,39 @@ function detectReportType(filename: string, headers: string[]) {
   }
 
   if (
-    name.includes("stocktake") ||
+    normalizedName.includes("stocktake") ||
     headerSet.has("stocktake_number") ||
     headerSet.has("counted") ||
     headerSet.has("actual_stock") ||
-    headerSet.has("expected_stock") ||
-    headerSet.has("adjustment_total")
+    headerSet.has("expected_stock")
   ) {
     return StockyReportType.STOCKTAKES;
   }
 
   if (
-    name.includes("activity") ||
+    normalizedName.includes("activity") ||
+    normalizedName.includes("adjustment") ||
+    normalizedName.includes("transfer") ||
     headerSet.has("activity_type") ||
     headerSet.has("quantity_change") ||
-    headerSet.has("transfer_number")
+    headerSet.has("transfer_number") ||
+    (headerSet.has("reason") &&
+      (headerSet.has("employee") || headerSet.has("origin")))
   ) {
     return StockyReportType.INVENTORY_ACTIVITY;
   }
 
   if (
-    name.includes("cost") ||
-    headerSet.has("average_cost") ||
-    headerSet.has("landed_cost")
+    (hasHistoricalFilename &&
+      (normalizedName.includes("cost") ||
+        normalizedName.includes("stock") ||
+        normalizedName.includes("on_hand"))) ||
+    (hasDateColumn &&
+      (headerSet.has("average_cost") ||
+        headerSet.has("landed_cost") ||
+        headerSet.has("total_cost") ||
+        headerSet.has("total_retail") ||
+        headerSet.has("total_items")))
   ) {
     return StockyReportType.HISTORICAL_COSTS;
   }
@@ -326,14 +362,23 @@ function extractNormalizedFields(
     sku: valueFor(raw, headerColumns, FIELD_ALIASES.sku),
     title: valueFor(raw, headerColumns, FIELD_ALIASES.title),
     barcode: valueFor(raw, headerColumns, FIELD_ALIASES.barcode),
+    shopifyId: valueFor(raw, headerColumns, FIELD_ALIASES.shopifyId),
     vendor: valueFor(raw, headerColumns, FIELD_ALIASES.vendor),
     supplier: valueFor(raw, headerColumns, FIELD_ALIASES.supplier),
     location: valueFor(raw, headerColumns, FIELD_ALIASES.location),
     cost: valueFor(raw, headerColumns, FIELD_ALIASES.cost),
+    retailValue: valueFor(raw, headerColumns, FIELD_ALIASES.retailValue),
+    adjustmentCost: valueFor(
+      raw,
+      headerColumns,
+      FIELD_ALIASES.adjustmentCost,
+    ),
     quantity: valueFor(raw, headerColumns, FIELD_ALIASES.quantity),
     status: valueFor(raw, headerColumns, FIELD_ALIASES.status),
     date: valueFor(raw, headerColumns, FIELD_ALIASES.date),
     reference: valueFor(raw, headerColumns, FIELD_ALIASES.reference),
+    reason: valueFor(raw, headerColumns, FIELD_ALIASES.reason),
+    employee: valueFor(raw, headerColumns, FIELD_ALIASES.employee),
   };
 }
 

@@ -841,7 +841,7 @@ function Files({ data, selectedBatchId }: ViewProps) {
     ? [
         `${sourceCoverage.covered.length} of ${sourceCoverage.total} core reports.`,
         sourceCoverage.coreTypesRepresented
-          ? "Completed purchase orders, stocktakes, and historical costs are represented."
+          ? "Completed purchase orders, stocktakes, and historical stock-on-hand or cost reports are represented."
           : `Still needed in one complete run: ${sourceCoverage.missing.map(stockyReportTypeLabel).join(", ")}.`,
         sourceCoverage.supplementalCovered.length > 0
           ? `Supplemental evidence included: ${sourceCoverage.supplementalCovered.map(stockyReportTypeLabel).join(", ")}.`
@@ -861,7 +861,7 @@ function Files({ data, selectedBatchId }: ViewProps) {
         <ul className={styles.guidanceList}>
           <li>Completed purchase order reports</li>
           <li>Stocktake history</li>
-          <li>Historical cost reports</li>
+          <li>Historical stock-on-hand or cost reports</li>
           <li>
             Helpful supplemental evidence when available: product or custom SKU
             reports and inventory activity

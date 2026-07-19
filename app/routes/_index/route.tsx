@@ -59,7 +59,7 @@ export default function App() {
             <ol>
               <li>Export completed purchase order reports.</li>
               <li>Export stocktake history.</li>
-              <li>Export historical cost reports.</li>
+              <li>Export historical stock-on-hand or cost reports.</li>
               <li>
                 Add product, custom SKU, and inventory activity reports when
                 they provide useful supporting evidence.

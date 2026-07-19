@@ -9,7 +9,7 @@ The pack intentionally covers:
   unknown columns, and a column-count mismatch.
 - Purchase orders with open, pending, partially received, and closed statuses.
 - Stocktakes and inventory activity across matching and mismatched locations.
-- Historical costs with blank costs and old supplier evidence.
+- Historical stock-on-hand or cost evidence with blank costs and old supplier evidence.
 - Vendor/supplier-only exports that should preserve supplier hints without SKU
   matching.
 - Unknown exports and malformed CSV that should remain diagnosable.

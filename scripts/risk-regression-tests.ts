@@ -214,7 +214,7 @@ test("public reviewer fixture pack contains exactly the ten canonical CSVs", asy
   assert.ok(filenames.includes("README.txt"));
   assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
   assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
-  assert.match(new TextDecoder().decode(archive["README.txt"]), /34 warnings/);
+  assert.match(new TextDecoder().decode(archive["README.txt"]), /33 warnings/);
   assert.match(
     readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
     /COPY --from=build \/app\/fixtures\/stocky \.\/fixtures\/stocky/,
@@ -372,6 +372,58 @@ test("Stocky parser flags malformed cost, quantity, and date evidence", () => {
   ]);
 });
 
+test("Stocky parser recognizes current documented Stocky report shapes", () => {
+  const stocktake = parseStockyCsv({
+    filename: "stocktake.csv",
+    content:
+      "Product Name,SKU,Barcode,Shopify ID,Retail Price,Cost Price,Expected Stock,Actual Stock,Adjustment Total,Adjustment Cost\nWidget,SKU-1,12345,98765,20.00,8.00,10,9,-1,-8.00",
+  });
+  const historicalStock = parseStockyCsv({
+    filename: "historical-stock-on-hand.csv",
+    content:
+      "Date,Total Cost,Total Retail,Total Items\n2026-07-01,100.00,250.00,12",
+  });
+  const adjustments = parseStockyCsv({
+    filename: "stocky-adjustments.csv",
+    content:
+      "Date,Reason,Employee,SKU,Adjustment Total\n2026-07-01,Cycle count,Alex,SKU-1,-1",
+  });
+  const transfers = parseStockyCsv({
+    filename: "stocky-transfers.csv",
+    content:
+      "Transfer Number,Status,Origin,Destination,Reason,SKU,Quantity\nTR-1,Complete,Warehouse,Shop floor,Replenishment,SKU-1,4",
+  });
+  const currentStock = parseStockyCsv({
+    filename: "current-stock-on-hand.csv",
+    content:
+      "SKU,Product Name,Cost Price,Stock on Hand\nSKU-1,Widget,8.00,9",
+  });
+  const currentProductCosts = parseStockyCsv({
+    filename: "product-costs.csv",
+    content: "SKU,Product Name,Unit Cost\nSKU-1,Widget,8.00",
+  });
+
+  assert.equal(stocktake.reportType, StockyReportType.STOCKTAKES);
+  assert.deepEqual(stocktake.unknownColumns, []);
+  assert.deepEqual(stocktake.records[0].warnings, []);
+
+  assert.equal(historicalStock.reportType, StockyReportType.HISTORICAL_COSTS);
+  assert.equal(reportRequiresSku(historicalStock.reportType), false);
+  assert.deepEqual(historicalStock.unknownColumns, []);
+  assert.deepEqual(historicalStock.records[0].warnings, []);
+
+  assert.equal(adjustments.reportType, StockyReportType.INVENTORY_ACTIVITY);
+  assert.deepEqual(adjustments.unknownColumns, []);
+  assert.deepEqual(adjustments.records[0].warnings, []);
+
+  assert.equal(transfers.reportType, StockyReportType.INVENTORY_ACTIVITY);
+  assert.deepEqual(transfers.unknownColumns, []);
+  assert.deepEqual(transfers.records[0].warnings, []);
+
+  assert.equal(currentStock.reportType, StockyReportType.PRODUCTS);
+  assert.equal(currentProductCosts.reportType, StockyReportType.PRODUCTS);
+});
+
 test("duplicate normalized headers preserve every value and use the first nonblank match", () => {
   const parsed = parseStockyCsv({
     filename: "stocky-products.csv",
@@ -417,14 +469,19 @@ test("Stocky parser detects product exports and preserves unknown columns", () =
     sku: "ABC-1",
     title: "Widget",
     barcode: "12345",
+    shopifyId: null,
     vendor: "Acme",
     supplier: null,
     location: null,
     cost: null,
+    retailValue: null,
+    adjustmentCost: null,
     quantity: null,
     status: null,
     date: null,
     reference: null,
+    reason: null,
+    employee: null,
   });
   assert.deepEqual(record.normalizedPayload.meta, {
     headers: ["SKU", "Product Name", "Vendor", "Barcode", "Custom Shelf"],
@@ -1351,7 +1408,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(result.importedRowCount, expectedImportedRows);
     assert.equal(result.importedRowCount, 38);
     assert.equal(result.warningCount, expectedWarnings);
-    assert.equal(result.warningCount, 34);
+    assert.equal(result.warningCount, 33);
 
     const [batch] = fakeDb.state.uploadBatches;
     assert.equal(batch.status, UploadBatchStatus.IMPORTED);
