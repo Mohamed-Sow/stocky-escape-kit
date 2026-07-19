@@ -47,6 +47,19 @@ function runStaticChecks() {
     process.cwd(),
     "app/routes/_index/route.tsx",
   );
+  const authLoginRoutePath = path.join(
+    process.cwd(),
+    "app/routes/auth.login/route.tsx",
+  );
+  const appShellRoutePath = path.join(process.cwd(), "app/routes/app.tsx");
+  const uninstallRoutePath = path.join(
+    process.cwd(),
+    "app/routes/webhooks.app.uninstalled.tsx",
+  );
+  const catalogModulePath = path.join(
+    process.cwd(),
+    "app/lib/catalog.server.ts",
+  );
   const packageJsonPath = path.join(process.cwd(), "package.json");
   const buildOutputCheckPath = path.join(
     process.cwd(),
@@ -83,6 +96,7 @@ function runStaticChecks() {
       "SHOPIFY_ADMIN_ACCESS_TOKEN",
       "SHOPIFY_SMOKE_ENDPOINT_URL",
       "SHOPIFY_SMOKE_TOKEN",
+      "SUPPORT_EMAIL",
       "SHOPIFY_PARTNER_ORG_ID",
       "SHOPIFY_PARTNER_API_TOKEN",
       "SHOPIFY_PARTNER_APP_ID",
@@ -135,6 +149,36 @@ function runStaticChecks() {
     failures.push("render.yaml is missing.");
   } else {
     const renderConfig = readFileSync(renderConfigPath, "utf8");
+    if (!/type:\s+web[\s\S]*?plan:\s+starter/.test(renderConfig)) {
+      failures.push(
+        "render.yaml must keep the production web service on the verified Starter plan.",
+      );
+    }
+    if (!/healthCheckPath:\s+\/healthz/.test(renderConfig)) {
+      failures.push(
+        "render.yaml must configure /healthz as the web-service health check.",
+      );
+    }
+    if (!/databases:[\s\S]*?plan:\s+basic-1gb/.test(renderConfig)) {
+      failures.push(
+        "render.yaml must keep Postgres on the verified basic-1gb plan.",
+      );
+    }
+    if (!/databases:[\s\S]*?diskSizeGB:\s+15/.test(renderConfig)) {
+      failures.push("render.yaml must pin the Postgres disk to 15 GB.");
+    }
+    if (
+      !/databases:[\s\S]*?storageAutoscalingEnabled:\s+false/.test(renderConfig)
+    ) {
+      failures.push(
+        "render.yaml must keep unexpected Postgres storage autoscaling disabled.",
+      );
+    }
+    if (!/databases:[\s\S]*?ipAllowList:\s*\[\]/.test(renderConfig)) {
+      failures.push(
+        "render.yaml must block public Postgres access with an empty ipAllowList.",
+      );
+    }
     if (
       !/key:\s+SHOPIFY_APP_HANDLE[\s\S]{0,80}value:\s+stocky-escape-kit-1/.test(
         renderConfig,
@@ -153,7 +197,11 @@ function runStaticChecks() {
         'render.yaml must set production SHOPIFY_BILLING_TEST to "false".',
       );
     }
-    for (const key of PARTNER_ENV_KEYS) {
+    for (const key of [
+      ...PARTNER_ENV_KEYS,
+      "SHOPIFY_SMOKE_TOKEN",
+      "SUPPORT_EMAIL",
+    ]) {
       if (!renderConfig.includes(`key: ${key}`)) {
         failures.push(`render.yaml is missing ${key}.`);
       }
@@ -167,6 +215,73 @@ function runStaticChecks() {
     if (publicIndexRoute.includes('action="/auth/login"')) {
       failures.push(
         "Public root must not render a manual shop-domain login form for App Store install flow.",
+      );
+    }
+  }
+
+  if (!existsSync(authLoginRoutePath)) {
+    failures.push("app/routes/auth.login/route.tsx is missing.");
+  } else {
+    const authLoginRoute = readFileSync(authLoginRoutePath, "utf8");
+    if (
+      authLoginRoute.includes("s-text-field") ||
+      authLoginRoute.includes('name="shop"')
+    ) {
+      failures.push(
+        "The auth fallback must not ask merchants to enter a shop domain.",
+      );
+    }
+    if (!authLoginRoute.includes("https://admin.shopify.com/")) {
+      failures.push(
+        "The auth fallback must send merchants to a Shopify-owned surface.",
+      );
+    }
+  }
+
+  if (!existsSync(appShellRoutePath)) {
+    failures.push("app/routes/app.tsx is missing.");
+  } else {
+    const appShellRoute = readFileSync(appShellRoutePath, "utf8");
+    if (
+      !appShellRoute.includes("isDirectDocumentRequestWithoutShopifyContext")
+    ) {
+      failures.push(
+        "The embedded app shell must handle direct document requests without rendering Shopify's thrown 200 response as an error page.",
+      );
+    }
+    if (
+      !appShellRoute.includes("await authenticate.admin(request)") ||
+      !appShellRoute.includes("<AppProvider embedded apiKey={apiKey}>")
+    ) {
+      failures.push(
+        "The embedded app shell must use Shopify's authenticated React Router boundary and App Bridge provider for session tokens.",
+      );
+    }
+  }
+
+  if (!existsSync(uninstallRoutePath)) {
+    failures.push("APP_UNINSTALLED webhook route is missing.");
+  } else {
+    const uninstallRoute = readFileSync(uninstallRoutePath, "utf8");
+    if (!uninstallRoute.includes("db.store.deleteMany")) {
+      failures.push(
+        "APP_UNINSTALLED must delete the store so migration data is removed by cascade.",
+      );
+    }
+  }
+
+  if (!existsSync(catalogModulePath)) {
+    failures.push("app/lib/catalog.server.ts is missing.");
+  } else {
+    const catalogModule = readFileSync(catalogModulePath, "utf8");
+    if (catalogModule.includes("inventoryLevels(first:")) {
+      failures.push(
+        "Catalog sync must not silently truncate nested inventory levels.",
+      );
+    }
+    if (!catalogModule.includes("CatalogSyncLimitError")) {
+      failures.push(
+        "Catalog sync must fail closed when the verified variant limit is exceeded.",
       );
     }
   }
@@ -216,6 +331,14 @@ function runStaticChecks() {
   } else {
     const shopifyServer = readFileSync(shopifyServerPath, "utf8");
     if (
+      !shopifyServer.includes("PrismaSessionStorage") ||
+      !shopifyServer.includes("expiringOfflineAccessTokens: true")
+    ) {
+      failures.push(
+        "app/shopify.server.ts must persist Shopify sessions and enable expiring offline access-token refresh.",
+      );
+    }
+    if (
       shopifyServer.includes("BillingInterval") ||
       shopifyServer.includes("OneTime") ||
       /billing\s*:/.test(shopifyServer)
@@ -257,12 +380,12 @@ function runStaticChecks() {
         )} still accepts one-time purchases for review readiness.`,
       );
     }
-    if (!source.includes("hasActiveBillingSubscription")) {
+    if (!source.includes("resolveBillingAccess")) {
       failures.push(
         `${path.relative(
           process.cwd(),
           routePath,
-        )} must gate merchant actions on allowlisted App Pricing subscriptions.`,
+        )} must gate merchant actions on verified App Pricing access.`,
       );
     }
     if (
@@ -271,6 +394,15 @@ function runStaticChecks() {
     ) {
       failures.push(
         "app/routes/app._index.tsx must redirect unpaid merchants to Shopify's hosted pricing page.",
+      );
+    }
+    if (
+      routePath === appRoutePath &&
+      (!source.includes("useAppBridge()") ||
+        !source.includes("shopify.idToken()"))
+    ) {
+      failures.push(
+        "Authenticated report downloads must attach a fresh App Bridge session token.",
       );
     }
   }
@@ -434,7 +566,9 @@ async function verifyHostedSmokeEndpoint({ endpointUrl, shop, smokeToken }) {
   }
 
   if (typeof payload.productSamples !== "number") {
-    failures.push("Hosted Shopify smoke endpoint returned no product sample count.");
+    failures.push(
+      "Hosted Shopify smoke endpoint returned no product sample count.",
+    );
   }
 
   if (typeof payload.locationSamples !== "number") {

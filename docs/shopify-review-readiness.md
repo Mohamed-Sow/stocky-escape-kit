@@ -11,9 +11,12 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 - [ ] Compliance webhooks are configured for `customers/data_request`, `customers/redact`, and `shop/redact`.
 - [ ] API contact email is set and does not contain restricted Shopify-like wording.
 - [ ] Emergency developer contact email and phone are set.
+- [ ] Production `SUPPORT_EMAIL` is set to a monitored address and appears as a working `mailto:` link on `/support` and `/privacy`.
+- [ ] Render Postgres has no `0.0.0.0/0` inbound rule; external access is disabled or limited to a temporary trusted `/32` address.
 - [ ] Privacy policy URL is live and explains Shopify API data, direct merchant uploads, raw CSV retention, logs, deletion, and support contact.
 - [ ] App icon is a 1200 x 1200 JPEG or PNG.
 - [ ] Screenshots show upload, parsed files/raw archive, audit findings, Shopify catalog sync, and exports.
+- [ ] Screenshots were regenerated from the currently deployed commit and show the visible 5,000-variant catalog boundary.
 
 ## Billing setup
 
@@ -34,12 +37,12 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 2. Select the private `$0` review/dev plan from Shopify's hosted pricing page.
 3. Open the embedded app and confirm billing shows the review test plan.
 4. Stage all ten CSV files from `fixtures/stocky` and submit them together as one migration run.
-5. Confirm the run shows 10 files, 38 imported rows, 39 warnings, one expected malformed-file failure, and a raw CSV download for every file.
+5. Confirm the run shows 10 files, 38 imported rows, 33 warnings, one expected malformed-file failure, and a raw CSV download for every file.
 6. Run Shopify catalog sync.
 7. Review audit findings for SKU gaps, missing cost/barcode/vendor, supplier hints, and open purchase order indicators.
-8. Confirm 62 audit findings for the canonical review-store catalog snapshot.
+8. Confirm 54 audit findings for the canonical review-store catalog snapshot. Missing-SKU rows and open purchase orders should be grouped into actionable findings instead of repeated noise.
 9. Download archive, SKU gap, supplier reconstruction, and migration checklist exports.
-10. Download the review-kit ZIP and verify it contains the four CSV reports plus `manifest.json` with byte counts and SHA-256 checksums.
+10. Download the review-kit ZIP and verify it contains all ten original CSV files under `source/`, the four generated reports, and `manifest.json` with byte counts and SHA-256 checksums.
 
 ## Claims boundary
 

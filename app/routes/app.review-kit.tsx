@@ -4,10 +4,10 @@ import { requireOwnedUploadBatch } from "../lib/batches.server";
 import { generateReviewKit } from "../lib/review-kit.server";
 import {
   getPartnerBillingCheckForAdmin,
-  hasActiveBillingSubscription,
   updateStoreBillingStatus,
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
+import { resolveBillingAccess } from "../lib/entitlements.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -19,9 +19,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     admin,
     shop: session.shop,
   });
-  await updateStoreBillingStatus({ shop: session.shop, billingCheck });
+  const billingStatus = await updateStoreBillingStatus({
+    shop: session.shop,
+    billingCheck,
+  });
+  const billingAccess = resolveBillingAccess({
+    billingCheck,
+    billingStatus,
+    storedPlan: store.billingPlan,
+    storedCheckedAt: store.billingCheckedAt,
+  });
 
-  if (!hasActiveBillingSubscription(billingCheck)) {
+  if (!billingAccess.active) {
     throw new Response("An active subscription is required.", { status: 402 });
   }
 
@@ -30,6 +39,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const reviewKit = await generateReviewKit({
     storeId: store.id,
     batchId: batch.id,
+    options: {
+      priorityChecklist: billingAccess.entitlements.priorityChecklist,
+      includeLocationMismatches: billingAccess.entitlements.locationAudit,
+    },
   });
   const body = reviewKit.bytes.buffer.slice(
     reviewKit.bytes.byteOffset,

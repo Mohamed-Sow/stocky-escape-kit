@@ -6,7 +6,9 @@ const FIXTURE_DIRECTORY = path.join(process.cwd(), "fixtures", "stocky");
 
 export async function generateReviewerFixturePack() {
   const filenames = (await readdir(FIXTURE_DIRECTORY))
-    .filter((filename) => filename.startsWith("stocky-") && filename.endsWith(".csv"))
+    .filter(
+      (filename) => filename.startsWith("stocky-") && filename.endsWith(".csv"),
+    )
     .sort();
 
   if (filenames.length !== 10) {
@@ -31,7 +33,7 @@ export async function generateReviewerFixturePack() {
       "",
       "These files contain fictional test data only.",
       "Upload all ten CSV files together as one migration run.",
-      "Expected result: 38 imported rows, 39 warnings, and one malformed file failure.",
+      "Expected result: 38 imported rows, 33 warnings, and one malformed file failure.",
     ].join("\n"),
   );
 

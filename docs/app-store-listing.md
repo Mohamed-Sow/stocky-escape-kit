@@ -23,9 +23,11 @@ Use Stocky Escape Kit to:
 - Compare Stocky SKUs and locations with the current Shopify catalog.
 - Find missing or duplicate SKUs, cost, barcode, vendor, and location gaps.
 - Retain supplier hints and open-purchase-order evidence for manual review.
-- Download four focused CSV reports or one checksum-manifest review kit.
+- Download four focused CSV reports or one checksum-manifest migration record containing every preserved original CSV.
 
 Stocky Escape Kit uses read-only access to products, inventory, and locations. It does not change Shopify data, replace inventory management, or import historical Stocky purchase orders into Shopify. Historical purchase orders are preserved and reviewed as migration evidence.
+
+Current catalog audits support stores with up to 5,000 Shopify variants. Larger catalogs stop before findings are generated, so the app never presents a partial catalog audit as complete.
 
 ## Feature bullets
 
@@ -34,7 +36,7 @@ Stocky Escape Kit uses read-only access to products, inventory, and locations. I
 - Read-only Shopify catalog comparison
 - Searchable, human-readable migration findings
 - Supplier evidence and migration checklist exports
-- One ZIP review kit with a checksum manifest
+- One ZIP migration record with original CSVs, generated reports, and checksums
 
 ## Pricing display names
 
@@ -58,3 +60,5 @@ Do not place price amounts in listing copy. The private plan identity is `shopif
 
 - App icon: `docs/review-assets/app-icon-1200.png` (1200 x 1200 PNG)
 - Screenshot set: `docs/review-assets/01-overview.png` through `docs/review-assets/05-exports.png`
+
+Regenerate the screenshot set from the deployed build after the hardening changes and before App Store submission.

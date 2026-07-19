@@ -2,7 +2,7 @@
 
 ## Product Summary
 
-Stocky Escape Kit is a Shopify public app for merchants migrating away from Stocky before the August 31, 2026 shutdown. The app preserves original Stocky CSV uploads plus parsed rows and metadata, audits migration gaps, reconstructs supplier hints, and produces Shopify-ready cleanup reports.
+Stocky Escape Kit is a Shopify public app for merchants migrating away from Stocky before the August 31, 2026 shutdown. The app preserves original Stocky CSV uploads plus parsed rows and metadata, audits migration gaps, reconstructs supplier evidence from purchase orders and custom SKU reports, and produces Shopify-ready cleanup reports. Stocky supplier records cannot be exported directly.
 
 This app should not become full inventory management software in v1.
 
@@ -22,17 +22,20 @@ This app should not become full inventory management software in v1.
 
 - OAuth install/linking uses the official Shopify React Router app package and Prisma session storage.
 - Billing uses Shopify App Pricing subscriptions. Public listing display names are `Stocky Escape Kit Basic` at `$99/mo`, `Stocky Escape Kit Pro` at `$199/mo`, and `Stocky Escape Kit Plus` at `$299/mo`; Shopify's immutable invoice plan names are `Stocky Basic`, `Stocky Pro`, and `Stocky Plus`.
-- CSV uploads accept Stocky export files, detect report type, persist raw CSV bytes and parsed rows, preserve unknown columns in row payloads, and record row-level warnings.
+- CSV uploads accept Stocky export files, detect report type, persist raw CSV bytes and parsed rows, preserve unknown columns in row payloads, and enforce plan-specific file, row, run, and stored-data limits before unbounded database writes.
 - Catalog sync uses the Shopify GraphQL Admin API with `read_products`, `read_inventory`, and `read_locations`.
-- Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog.
-- Export downloads generate archive, SKU gap, supplier reconstruction, and migration checklist CSVs. Uploaded raw CSVs remain downloadable from the parsed files table.
+- Catalog pagination either verifies the complete product-variant and location snapshot within the configured safety limit or fails without generating a partial audit.
+- Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog. Historical transaction rows are not misclassified as duplicate products, and supplier-only evidence does not create false missing-SKU blockers.
+- Every active plan includes the archive, SKU gap, supplier evidence, migration checklist, location audit, and complete review kit. The kit packages every preserved original CSV with all generated reports and a SHA-256 manifest. Plans differ by safe processing and storage capacity, not by withholding core migration outputs. Raw CSVs also remain individually downloadable from the parsed files table.
+- A transient Partner API failure uses the last verified active billing state for at most 24 hours. A successful no-subscription response cancels access immediately; an outage cannot grant indefinite paid access.
+- A canceled subscription remains read-only so the merchant can retrieve or delete existing evidence. `APP_UNINSTALLED` immediately deletes the store and all cascaded migration data.
 
 ## Environment
 
 `SHOPIFY_APP_HANDLE` is required for Shopify's hosted App Pricing redirect and should be `stocky-escape-kit-1` for the current app.
 `SHOPIFY_BILLING_TEST` defaults to test mode outside production unless set to `false`.
 Set `SHOPIFY_BILLING_TEST=false` for production merchant installs.
-`SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per sync request.
+`SHOPIFY_SYNC_VARIANT_LIMIT` defaults to `5000` variants per verified sync. That is the current supported catalog ceiling, not a plan benefit. If the catalog exceeds the limit, the sync fails closed instead of producing findings from a partial catalog; larger catalogs require a bulk-sync architecture before the app can be marketed to them.
 `SHOPIFY_TEST_SHOP` is used only by the live Shopify smoke test.
 `SHOPIFY_ADMIN_ACCESS_TOKEN` is optional and lets the live smoke test call
 Shopify directly when no local Prisma session is available.
@@ -40,6 +43,8 @@ Shopify directly when no local Prisma session is available.
 `SHOPIFY_PARTNER_APP_ID` are required on the server for Shopify App Pricing
 billing proof through the Partner API `activeSubscription` query. The Partner
 API client must have Manage apps permission.
+`SUPPORT_EMAIL` is required in production so the public support and privacy
+pages expose a monitored merchant contact.
 
 Partner Dashboard App Pricing must be configured before review:
 
@@ -95,9 +100,13 @@ See `docs/render-deployment.md` before creating or updating Render services.
 
 ## Public Pricing
 
-- `Stocky Escape Kit Basic`: `$99/mo` migration archive and audit.
-- `Stocky Escape Kit Pro`: `$199/mo` larger files, supplier reconstruction, all exports.
-- `Stocky Escape Kit Plus`: `$299/mo` multi-location reports and priority migration checklist.
+- `Stocky Escape Kit Basic`: `$99/mo`, up to 10 files, 10 MB, and 40,000 parsed rows per run; 100 MB stored source data.
+- `Stocky Escape Kit Pro`: `$199/mo`, up to 20 files, 15 MB, and 60,000 parsed rows per run; 250 MB stored source data.
+- `Stocky Escape Kit Plus`: `$299/mo`, up to 30 files, 20 MB, and 75,000 parsed rows per run; 500 MB stored source data.
+
+All three plans include all four CSV reports, location mismatch analysis, the prioritized checklist, and the complete review kit. Request and row ceilings are intentionally bounded for the current 512 MB Render Starter web service. A synthetic 35 MB / 100,000-row parse exceeded 1 GB RSS, so those former ceilings are not safe on the paid production instance. Retained-source limits also account for base64 raw files, parsed JSON, indexes, and catalog snapshots sharing a 15 GB Postgres disk. A larger source report must be narrowed at export time when Stocky offers a suitable filter; otherwise the app needs a streaming worker and compute/storage upgrade before it can support that file truthfully.
+
+Current catalog audits support stores with up to 5,000 Shopify variants on every plan. Stores above that ceiling are rejected before findings are regenerated; they are not shown a partial catalog as a complete audit.
 
 ## Implementation Entry Point
 

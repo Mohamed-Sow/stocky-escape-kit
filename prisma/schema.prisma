@@ -34,14 +34,17 @@ model Session {
 }
 
 model Store {
-  id            String        @id @default(cuid())
-  shop          String        @unique
-  installed     Boolean       @default(true)
-  scopes        String?
-  billingStatus BillingStatus @default(NOT_STARTED)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  uninstalledAt DateTime?
+  id               String        @id @default(cuid())
+  shop             String        @unique
+  installed        Boolean       @default(true)
+  scopes           String?
+  billingStatus    BillingStatus @default(NOT_STARTED)
+  billingPlan      String?
+  billingCheckedAt DateTime?
+  billingEndedAt   DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  uninstalledAt    DateTime?
 
   uploadBatches    UploadBatch[]
   catalogSnapshots ShopifyCatalogSnapshot[]
@@ -54,19 +57,23 @@ model Store {
 model UploadBatch {
   id               String            @id @default(cuid())
   storeId          String
+  auditSnapshotId  String?
   status           UploadBatchStatus @default(PENDING)
   fileCount        Int               @default(0)
   importedRowCount Int               @default(0)
   warningCount     Int               @default(0)
+  auditedAt        DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
-  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store         Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  auditSnapshot ShopifyCatalogSnapshot? @relation(fields: [auditSnapshotId], references: [id], onDelete: SetNull)
   uploadedFiles UploadedFile[]
   auditFindings AuditFinding[]
   exportJobs    ExportJob[]
 
   @@index([storeId, status])
+  @@index([auditSnapshotId])
 }
 
 model UploadedFile {
@@ -122,7 +129,8 @@ model ShopifyCatalogSnapshot {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store          Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  auditedBatches UploadBatch[]
 
   @@index([storeId, syncStatus])
 }

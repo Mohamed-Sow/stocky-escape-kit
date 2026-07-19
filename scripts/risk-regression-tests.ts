@@ -18,16 +18,36 @@ import {
 import type { Prisma } from "@prisma/client";
 import db from "../app/db.server";
 import { regenerateAuditFindings } from "../app/lib/audit.server";
-import { readCatalogSummary } from "../app/lib/catalog.server";
+import {
+  CatalogSyncLimitError,
+  fetchCatalogVariants,
+  readCatalogSummary,
+} from "../app/lib/catalog.server";
 import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
 import { generateReviewKit } from "../app/lib/review-kit.server";
 import { generateReviewerFixturePack } from "../app/lib/review-fixtures.server";
 import {
+  attachmentContentDisposition,
+  safeDownloadFilename,
+} from "../app/lib/filenames.server";
+import {
+  canGenerateExport,
+  getPlanEntitlements,
+  resolveBillingAccess,
+  resolveBillingTier,
+  validateUploadFiles,
+} from "../app/lib/entitlements.server";
+import {
   RESET_CONFIRMATION,
   resetStoreMigrationData,
 } from "../app/lib/reset.server";
+import {
+  RequestSizeLimitError,
+  readFormDataWithinLimit,
+} from "../app/lib/request-size.server";
 import { runHostedSmokeProof } from "../app/lib/shopify-smoke.server";
+import { getSupportEmail } from "../app/lib/support.server";
 import {
   BILLING_PLAN_NAMES,
   PRIVATE_TEST_BILLING_DISPLAY_NAME,
@@ -44,6 +64,7 @@ import { importStockyCsvFiles } from "../app/lib/uploads.server";
 import {
   normalizeHeader,
   parseStockyCsv,
+  reportRequiresSku,
 } from "../app/lib/stocky-parser.server";
 
 const STOCKY_FIXTURE_DIR = path.join(process.cwd(), "fixtures", "stocky");
@@ -59,6 +80,7 @@ test("public reviewer fixture pack contains exactly the ten canonical CSVs", asy
   assert.ok(filenames.includes("README.txt"));
   assert.ok(filenames.includes("stocky-malformed-unclosed-quote.csv"));
   assert.ok(filenames.includes("stocky-products-edge-cases.csv"));
+  assert.match(new TextDecoder().decode(archive["README.txt"]), /33 warnings/);
   assert.match(
     readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
     /COPY --from=build \/app\/fixtures\/stocky \.\/fixtures\/stocky/,
@@ -114,28 +136,57 @@ test("CSV export neutralizes spreadsheet formula injection values", () => {
   );
 });
 
+test("download filenames cannot escape quoted headers or archive paths", () => {
+  assert.equal(
+    safeDownloadFilename('..\\bad/"name\r\n.csv'),
+    ".._bad__name__.csv",
+  );
+});
+
+test("download headers keep Unicode filenames in an encoded parameter", () => {
+  assert.equal(
+    attachmentContentDisposition("Stocky café.csv"),
+    "attachment; filename=\"Stocky caf_.csv\"; filename*=UTF-8''Stocky%20caf%C3%A9.csv",
+  );
+});
+
 test("CSV parser accepts semicolon and tab-delimited exports", () => {
-  assert.deepEqual(parseCsv('SKU;Notes\nABC;"contains; delimiter"'), {
-    headers: ["SKU", "Notes"],
+  assert.deepEqual(parseCsv('SKU;Notes;Optional\nABC;"contains; delimiter";'), {
+    headers: ["SKU", "Notes", "Optional"],
     rows: [
       {
         sourceRowNumber: 2,
-        values: ["ABC", "contains; delimiter"],
+        values: ["ABC", "contains; delimiter", ""],
       },
     ],
     errors: [],
   });
 
-  assert.deepEqual(parseCsv("SKU\tQty\nABC\t12"), {
-    headers: ["SKU", "Qty"],
+  assert.deepEqual(parseCsv("SKU\tQty\tOptional\nABC\t12\t"), {
+    headers: ["SKU", "Qty", "Optional"],
     rows: [
       {
         sourceRowNumber: 2,
-        values: ["ABC", "12"],
+        values: ["ABC", "12", ""],
       },
     ],
     errors: [],
   });
+});
+
+test("CSV parser keeps physical source row numbers across blank and quoted lines", () => {
+  const csv = parseCsv('SKU,Notes\n\nABC,"first\nsecond"\n\nDEF,plain\n');
+
+  assert.deepEqual(
+    csv.rows.map((row) => ({
+      sourceRowNumber: row.sourceRowNumber,
+      sku: row.values[0],
+    })),
+    [
+      { sourceRowNumber: 3, sku: "ABC" },
+      { sourceRowNumber: 6, sku: "DEF" },
+    ],
+  );
 });
 
 test("Stocky parser detects product exports and preserves unknown columns", () => {
@@ -183,6 +234,24 @@ test("Stocky parser records missing SKU warnings without dropping rows", () => {
   assert.equal(parsed.warningCount, 1);
 });
 
+test("supplier-only and unclassified evidence do not create false missing SKU warnings", () => {
+  const suppliers = parseStockyCsv({
+    filename: "stocky-vendors.csv",
+    content: "Supplier Name,Phone\nAcme,555-0100",
+  });
+  const unknown = parseStockyCsv({
+    filename: "notes.csv",
+    content: "Export Label,Freeform Value\nReminder,Keep this",
+  });
+
+  assert.equal(suppliers.reportType, StockyReportType.VENDORS);
+  assert.equal(unknown.reportType, StockyReportType.UNKNOWN);
+  assert.equal(reportRequiresSku(suppliers.reportType), false);
+  assert.equal(reportRequiresSku(unknown.reportType), false);
+  assert.deepEqual(suppliers.records[0].warnings, []);
+  assert.deepEqual(unknown.records[0].warnings, []);
+});
+
 test("header normalization is stable across punctuation and whitespace", () => {
   assert.equal(normalizeHeader(" Product / SKU "), "product_sku");
   assert.equal(normalizeHeader("PO # Number"), "po_number");
@@ -216,6 +285,84 @@ test("catalog summary reader rejects invalid payloads and accepts variant arrays
   };
 
   assert.deepEqual(readCatalogSummary(summary), summary);
+});
+
+test("catalog variant sync paginates every page and omits incomplete nested inventory levels", async () => {
+  const cursors: Array<string | null> = [];
+  const queries: string[] = [];
+  const pages = [
+    {
+      data: {
+        productVariants: {
+          pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
+          edges: [catalogVariantEdge("1", "SKU-1")],
+        },
+      },
+    },
+    {
+      data: {
+        productVariants: {
+          pageInfo: { hasNextPage: false, endCursor: "cursor-2" },
+          edges: [catalogVariantEdge("2", "SKU-2")],
+        },
+      },
+    },
+  ];
+  const admin = {
+    graphql: async (
+      query: string,
+      options?: { variables?: Record<string, unknown> },
+    ) => {
+      queries.push(query);
+      cursors.push((options?.variables?.cursor as string | null) ?? null);
+      const page = pages[cursors.length - 1];
+      return new Response(JSON.stringify(page), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  };
+
+  const variants = await fetchCatalogVariants({ admin, limit: 10 });
+
+  assert.deepEqual(cursors, [null, "cursor-1"]);
+  assert.deepEqual(
+    variants.map((variant) => variant.sku),
+    ["SKU-1", "SKU-2"],
+  );
+  assert.equal(
+    queries.every((query) => !query.includes("inventoryLevels")),
+    true,
+  );
+  assert.equal(
+    variants.every((variant) => variant.locations.length === 0),
+    true,
+  );
+});
+
+test("catalog variant sync fails closed instead of auditing a partial catalog", async () => {
+  const admin = {
+    graphql: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            productVariants: {
+              pageInfo: { hasNextPage: false, endCursor: "cursor-2" },
+              edges: [
+                catalogVariantEdge("1", "SKU-1"),
+                catalogVariantEdge("2", "SKU-2"),
+              ],
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+  };
+
+  await assert.rejects(
+    fetchCatalogVariants({ admin, limit: 1 }),
+    CatalogSyncLimitError,
+  );
 });
 
 test("billing helpers validate configured App Pricing subscription names", () => {
@@ -326,6 +473,161 @@ test("billing helpers validate configured App Pricing subscription names", () =>
   }
 });
 
+test("plan entitlements are enforced by tier and survive transient billing proof failures", () => {
+  const reviewCheck = smokeBillingCheck();
+  assert.equal(resolveBillingTier(reviewCheck), "review");
+
+  const proCheck: PartnerBillingCheck = {
+    ...reviewCheck,
+    verified: true,
+    subscription: {
+      ...reviewCheck.subscription!,
+      items: [
+        {
+          handle: "stocky-pro",
+          description: "Stocky Pro",
+          price: null,
+        },
+      ],
+    },
+  };
+  const pro = getPlanEntitlements(resolveBillingTier(proCheck));
+  const basic = getPlanEntitlements("basic");
+
+  assert.equal(canGenerateExport(basic, ExportType.ARCHIVE_CSV), true);
+  assert.equal(
+    canGenerateExport(basic, ExportType.SUPPLIER_RECONSTRUCTION_REPORT),
+    true,
+  );
+  assert.equal(canGenerateExport(pro, ExportType.MIGRATION_CHECKLIST), true);
+  assert.equal(basic.reviewKit, true);
+  assert.equal(basic.locationAudit, true);
+  assert.equal(pro.reviewKit, true);
+  assert.equal(pro.locationAudit, true);
+  assert.ok(basic.maxRowsPerBatch < pro.maxRowsPerBatch);
+
+  const fallback = resolveBillingAccess({
+    billingCheck: {
+      ...reviewCheck,
+      active: false,
+      verified: false,
+      subscription: null,
+      errors: ["Partner API unavailable"],
+    },
+    billingStatus: BillingStatus.ACTIVE,
+    storedPlan: "Stocky Plus",
+    storedCheckedAt: new Date("2026-07-19T12:00:00.000Z"),
+    now: new Date("2026-07-19T12:30:00.000Z"),
+  });
+  assert.equal(fallback.active, true);
+  assert.equal(fallback.tier, "plus");
+  assert.equal(fallback.usingLastVerifiedStatus, true);
+
+  const expiredFallback = resolveBillingAccess({
+    billingCheck: {
+      ...reviewCheck,
+      active: false,
+      verified: false,
+      subscription: null,
+      errors: ["Partner API unavailable"],
+    },
+    billingStatus: BillingStatus.ACTIVE,
+    storedPlan: "Stocky Plus",
+    storedCheckedAt: new Date("2026-07-17T12:00:00.000Z"),
+    now: new Date("2026-07-19T12:30:00.000Z"),
+  });
+  assert.equal(expiredFallback.active, false);
+  assert.equal(expiredFallback.usingLastVerifiedStatus, false);
+
+  const futureDatedFallback = resolveBillingAccess({
+    billingCheck: {
+      ...reviewCheck,
+      active: false,
+      verified: false,
+      subscription: null,
+      errors: ["Partner API unavailable"],
+    },
+    billingStatus: BillingStatus.ACTIVE,
+    storedPlan: "Stocky Plus",
+    storedCheckedAt: new Date("2026-07-20T12:00:00.000Z"),
+    now: new Date("2026-07-19T12:30:00.000Z"),
+  });
+  assert.equal(futureDatedFallback.active, false);
+  assert.equal(futureDatedFallback.usingLastVerifiedStatus, false);
+});
+
+test("upload limits reject oversized runs before creating database rows", () => {
+  const basic = getPlanEntitlements("basic");
+  const csv = (name: string, size: number) => ({ name, size }) as File;
+
+  assert.throws(
+    () =>
+      validateUploadFiles({
+        files: Array.from({ length: 11 }, (_, index) =>
+          csv(`file-${index}.csv`, 1),
+        ),
+        entitlements: basic,
+        currentStoredBytes: 0,
+      }),
+    /up to 10 files/,
+  );
+  assert.throws(
+    () =>
+      validateUploadFiles({
+        files: [csv("too-large.csv", basic.maxFileBytes + 1)],
+        entitlements: basic,
+        currentStoredBytes: 0,
+      }),
+    /per-file limit/,
+  );
+  assert.throws(
+    () =>
+      validateUploadFiles({
+        files: [csv("fits.csv", 2)],
+        entitlements: basic,
+        currentStoredBytes: basic.maxStoredBytes - 1,
+      }),
+    /stored-data allowance/,
+  );
+});
+
+test("multipart parsing enforces the byte ceiling even without Content-Length", async () => {
+  const smallBody = new FormData();
+  smallBody.set("intent", "upload_csv");
+  const smallRequest = new Request("https://example.invalid/app", {
+    method: "POST",
+    body: smallBody,
+  });
+  assert.equal(smallRequest.headers.has("content-length"), false);
+  assert.equal(
+    (await readFormDataWithinLimit(smallRequest, 10_000)).get("intent"),
+    "upload_csv",
+  );
+
+  const largeBody = new FormData();
+  largeBody.set("payload", "x".repeat(2_000));
+  const largeRequest = new Request("https://example.invalid/app", {
+    method: "POST",
+    body: largeBody,
+  });
+  await assert.rejects(
+    () => readFormDataWithinLimit(largeRequest, 256),
+    RequestSizeLimitError,
+  );
+
+  const misleadingLengthBody = new FormData();
+  misleadingLengthBody.set("payload", "x".repeat(2_000));
+  const misleadingLengthRequest = new Request("https://example.invalid/app", {
+    method: "POST",
+    headers: { "Content-Length": "1" },
+    body: misleadingLengthBody,
+  });
+  await assert.rejects(
+    () => readFormDataWithinLimit(misleadingLengthRequest, 256),
+    RequestSizeLimitError,
+  );
+});
+
 test("billing test mode defaults safely outside production", () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalBillingTest = process.env.SHOPIFY_BILLING_TEST;
@@ -356,6 +658,23 @@ test("billing test mode defaults safely outside production", () => {
   }
 });
 
+test("public support contact accepts only a normal email address", () => {
+  const original = process.env.SUPPORT_EMAIL;
+
+  try {
+    process.env.SUPPORT_EMAIL = "support@example.com";
+    assert.equal(getSupportEmail(), "support@example.com");
+    process.env.SUPPORT_EMAIL = "support@example.com?subject=token";
+    assert.equal(getSupportEmail(), null);
+  } finally {
+    if (original === undefined) {
+      delete process.env.SUPPORT_EMAIL;
+    } else {
+      process.env.SUPPORT_EMAIL = original;
+    }
+  }
+});
+
 const smokeShop = "fixture-stocky-dev.myshopify.com";
 const smokeResult = {
   shop: { id: "gid://shopify/Shop/1", myshopifyDomain: smokeShop },
@@ -373,6 +692,7 @@ function smokeBillingCheck({
 } = {}): PartnerBillingCheck {
   return {
     active,
+    verified: true,
     shop: smokeShop,
     shopId: smokeResult.shop.id,
     source: "Partner API activeSubscription",
@@ -740,11 +1060,16 @@ test("fixture pack captures report-specific migration risks", () => {
     "Payment Terms",
     "Last Ordered At",
   ]);
-  assert.equal(vendors.warningCount, 8);
+  assert.equal(vendors.warningCount, 4);
+  assert.equal(
+    vendors.records.some((record) => record.warnings.includes("missing_sku")),
+    false,
+  );
 
   const unknown = parseStockyFixture("stocky-unknown-export.csv");
   assert.equal(unknown.reportType, StockyReportType.UNKNOWN);
   assert.deepEqual(unknown.unknownColumns, ["Export Label", "Freeform Value"]);
+  assert.equal(unknown.warningCount, 2);
 
   const malformed = parseStockyFixture("stocky-malformed-unclosed-quote.csv");
   assert.deepEqual(malformed.parseErrors, [
@@ -815,12 +1140,13 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(result.importedRowCount, expectedImportedRows);
     assert.equal(result.importedRowCount, 38);
     assert.equal(result.warningCount, expectedWarnings);
-    assert.equal(result.warningCount, 39);
+    assert.equal(result.warningCount, 33);
 
     const [batch] = fakeDb.state.uploadBatches;
     assert.equal(batch.status, UploadBatchStatus.IMPORTED);
     assert.equal(batch.fileCount, fixtureFilenames.length);
     assert.equal(batch.importedRowCount, expectedImportedRows);
+    assert.equal(batch.auditSnapshotId ?? null, null);
     assert.equal(fakeDb.state.uploadedFiles.length, fixtureFilenames.length);
     assert.equal(
       fakeDb.state.uploadedFiles.every(
@@ -909,7 +1235,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       JSON.parse(readStockyFixture("mock-shopify-catalog-summary.json")),
     );
     assert.ok(catalog);
-    fakeDb.seedCatalogSnapshot({
+    const seededSnapshot = fakeDb.seedCatalogSnapshot({
       storeId: store.id,
       summary: catalog,
     });
@@ -919,10 +1245,29 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       batchId: result.batchId,
     });
     assert.ok(auditResult.created > 0);
+    assert.equal(
+      fakeDb.state.uploadBatches[0].auditSnapshotId,
+      seededSnapshot.id,
+    );
+    assert.ok(fakeDb.state.uploadBatches[0].auditedAt);
+
+    const otherStore = fakeDb.createStore("other-stocky-dev.myshopify.com");
+    const findingCountBeforeOwnershipCheck = fakeDb.state.auditFindings.length;
+    const crossStoreAudit = await regenerateAuditFindings({
+      storeId: otherStore.id,
+      batchId: result.batchId,
+      snapshotId: seededSnapshot.id,
+    });
+    assert.equal(crossStoreAudit.created, 0);
+    assert.equal(
+      fakeDb.state.auditFindings.length,
+      findingCountBeforeOwnershipCheck,
+    );
 
     const categories = new Set(
       fakeDb.state.auditFindings.map((finding) => finding.category),
     );
+    assert.equal(fakeDb.state.auditFindings.length, 54);
     for (const category of [
       FindingCategory.MISSING_SKU,
       FindingCategory.UNMATCHED_SHOPIFY_SKU,
@@ -951,6 +1296,47 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       fakeDb.state.auditFindings.some(
         (finding) => finding.severity === FindingSeverity.INFO,
       ),
+    );
+    const missingSkuFindings = fakeDb.state.auditFindings.filter(
+      (finding) => finding.category === FindingCategory.MISSING_SKU,
+    );
+    assert.equal(
+      missingSkuFindings.some((finding) =>
+        ["stocky-vendors.csv", "stocky-unknown-export.csv"].includes(
+          String((finding.source as { filename?: string } | null)?.filename),
+        ),
+      ),
+      false,
+    );
+    assert.equal(
+      missingSkuFindings.every((finding) =>
+        Array.isArray(
+          (finding.source as { sourceRowNumbers?: unknown } | null)
+            ?.sourceRowNumbers,
+        ),
+      ),
+      true,
+    );
+    const stockyDuplicateFindings = fakeDb.state.auditFindings.filter(
+      (finding) =>
+        finding.category === FindingCategory.DUPLICATE_SKU &&
+        finding.title === "Product export contains duplicate SKU rows",
+    );
+    assert.equal(stockyDuplicateFindings.length, 1);
+    assert.equal(
+      (stockyDuplicateFindings[0].source as { filename?: string }).filename,
+      "stocky-products-edge-cases.csv",
+    );
+    const openPurchaseOrderFindings = fakeDb.state.auditFindings.filter(
+      (finding) =>
+        finding.category === FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
+    );
+    assert.equal(openPurchaseOrderFindings.length, 4);
+    assert.equal(
+      openPurchaseOrderFindings.some((finding) =>
+        finding.message.includes("PO-1045"),
+      ),
+      true,
     );
 
     const otherBatch = await importStockyCsvFiles({
@@ -1007,6 +1393,10 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     );
     assert.match(supplier.body, /SUP-REF-771/);
     assert.match(supplier.body, /TrailForge/);
+    assert.match(
+      supplier.body,
+      /Supplier records cannot be exported directly from Stocky/,
+    );
 
     const checklist = await generateExport({
       storeId: store.id,
@@ -1019,6 +1409,20 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       checklist.body,
       /Historical Stocky purchase orders cannot be imported into Shopify/,
     );
+    assert.match(checklist.body, /Confirm source report coverage/);
+    assert.match(checklist.body, /Rebuild supplier records/);
+
+    const priorityChecklist = await generateExport({
+      storeId: store.id,
+      batchId: result.batchId,
+      exportType: ExportType.MIGRATION_CHECKLIST,
+      options: { priorityChecklist: true },
+    });
+    assert.ok(
+      priorityChecklist.body.startsWith(
+        "priority,item,status,evidence,next_action",
+      ),
+    );
 
     const reviewKit = await generateReviewKit({
       storeId: store.id,
@@ -1026,13 +1430,27 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     });
     const zipEntries = unzipSync(reviewKit.bytes);
     const exportDate = new Date().toISOString().slice(0, 10);
-    assert.deepEqual(Object.keys(zipEntries).sort(), [
-      `archive_csv-${exportDate}.csv`,
-      "manifest.json",
-      `migration_checklist-${exportDate}.csv`,
-      `sku_gap_report-${exportDate}.csv`,
-      `supplier_reconstruction_report-${exportDate}.csv`,
-    ]);
+    const zipNames = Object.keys(zipEntries).sort();
+    assert.deepEqual(
+      zipNames.filter((filename) => !filename.startsWith("source/")),
+      [
+        `archive_csv-${exportDate}.csv`,
+        "manifest.json",
+        `migration_checklist-${exportDate}.csv`,
+        `sku_gap_report-${exportDate}.csv`,
+        `supplier_reconstruction_report-${exportDate}.csv`,
+      ],
+    );
+    assert.equal(
+      zipNames.filter((filename) => filename.startsWith("source/")).length,
+      fixtureFilenames.length,
+    );
+    assert.equal(
+      zipNames.some((filename) =>
+        filename.endsWith("stocky-malformed-unclosed-quote.csv"),
+      ),
+      true,
+    );
     const manifest = JSON.parse(
       Buffer.from(zipEntries["manifest.json"]).toString("utf8"),
     ) as {
@@ -1040,7 +1458,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       files: Array<{ filename: string; bytes: number; sha256: string }>;
     };
     assert.equal(manifest.batchId, result.batchId);
-    assert.equal(manifest.files.length, 4);
+    assert.equal(manifest.files.length, 4 + fixtureFilenames.length);
     for (const file of manifest.files) {
       const bytes = Buffer.from(zipEntries[file.filename]);
       assert.equal(bytes.byteLength, file.bytes);
@@ -1052,15 +1470,126 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
 
     assert.equal(
       fakeDb.state.exportJobs.length,
-      Object.values(ExportType).length * 2,
+      Object.values(ExportType).length * 2 + 1,
     );
     assert.deepEqual(
       fakeDb.state.exportJobs.map((job) => job.status),
       Array.from(
-        { length: Object.values(ExportType).length * 2 },
+        { length: Object.values(ExportType).length * 2 + 1 },
         () => ExportStatus.SUCCEEDED,
       ),
     );
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("migration runs fail individual files before exceeding the parsed-row ceiling", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("row-limit-stocky-dev.myshopify.com");
+
+  try {
+    const entitlements = {
+      ...getPlanEntitlements("basic"),
+      maxRowsPerFile: 10,
+      maxRowsPerBatch: 2,
+    };
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      entitlements,
+      files: [
+        new File(["SKU,Title\nONE,One\nTWO,Two\n"], "first.csv", {
+          type: "text/csv",
+        }),
+        new File(["SKU,Title\nTHREE,Three\n"], "second.csv", {
+          type: "text/csv",
+        }),
+      ],
+    });
+
+    assert.equal(result.importedRowCount, 2);
+    assert.equal(result.failedFileCount, 1);
+    assert.equal(fakeDb.state.parsedRecords.length, 2);
+    const failed = fakeDb.state.uploadedFiles.find(
+      (file) => file.originalFilename === "second.csv",
+    );
+    assert.equal(failed?.parseStatus, FileParseStatus.FAILED);
+    assert.match(failed?.errorMessage ?? "", /parsed-row limit/);
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("header-only Stocky exports remain preserved as successful empty evidence", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("empty-evidence-stocky-dev.myshopify.com");
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(["SKU,Title,Vendor\n"], "empty-products.csv", {
+          type: "text/csv",
+        }),
+      ],
+    });
+
+    assert.equal(result.importedRowCount, 0);
+    assert.equal(result.failedFileCount, 0);
+    assert.equal(
+      fakeDb.state.uploadBatches[0]?.status,
+      UploadBatchStatus.IMPORTED,
+    );
+    assert.equal(
+      fakeDb.state.uploadedFiles[0]?.parseStatus,
+      FileParseStatus.PARSED,
+    );
+    assert.equal(fakeDb.state.uploadedFiles[0]?.rawContentByteLength, 17);
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("audit generation reads large parsed files in bounded pages", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("paged-audit-stocky-dev.myshopify.com");
+  const rows = Array.from(
+    { length: 501 },
+    (_, index) => `SKU-${String(index + 1).padStart(4, "0")},Fixture vendor`,
+  );
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File([`SKU,Vendor\n${rows.join("\n")}\n`], "paged-products.csv", {
+          type: "text/csv",
+        }),
+      ],
+    });
+
+    assert.equal(result.importedRowCount, 501);
+    assert.equal(fakeDb.state.auditFindings.length, 501);
+    assert.equal(
+      fakeDb.state.auditFindings.every(
+        (finding) =>
+          finding.category ===
+          FindingCategory.SUPPLIER_RECONSTRUCTION_CANDIDATE,
+      ),
+      true,
+    );
+
+    fakeDb.queryStats.parsedRecordFindMany.length = 0;
+    const archive = await generateExport({
+      storeId: store.id,
+      batchId: result.batchId,
+      exportType: ExportType.ARCHIVE_CSV,
+    });
+    assert.equal(archive.body.split("\n").length, 502);
+    assert.deepEqual(fakeDb.queryStats.parsedRecordFindMany, [
+      { take: 500, distinct: false },
+      { take: 500, distinct: false },
+    ]);
   } finally {
     fakeDb.restore();
   }
@@ -1100,12 +1629,37 @@ function getMeta(
   return payload.meta ?? {};
 }
 
+function catalogVariantEdge(id: string, sku: string) {
+  return {
+    cursor: `cursor-${id}`,
+    node: {
+      id: `gid://shopify/ProductVariant/${id}`,
+      sku,
+      barcode: null,
+      displayName: `Fixture variant ${id}`,
+      product: {
+        id: `gid://shopify/Product/${id}`,
+        title: `Fixture product ${id}`,
+        vendor: "Fixture vendor",
+      },
+      inventoryItem: {
+        id: `gid://shopify/InventoryItem/${id}`,
+        sku,
+        unitCost: { amount: "1.00", currencyCode: "USD" },
+      },
+    },
+  };
+}
+
 type StoreRow = {
   id: string;
   shop: string;
   installed: boolean;
   scopes: string | null;
   billingStatus: BillingStatus;
+  billingPlan: string | null;
+  billingCheckedAt: Date | null;
+  billingEndedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   uninstalledAt: Date | null;
@@ -1114,10 +1668,12 @@ type StoreRow = {
 type UploadBatchRow = {
   id: string;
   storeId: string;
+  auditSnapshotId: string | null;
   status: UploadBatchStatus;
   fileCount: number;
   importedRowCount: number;
   warningCount: number;
+  auditedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -1229,13 +1785,32 @@ type UploadBatchUpdateArgs = {
   data: Partial<
     Pick<
       UploadBatchRow,
-      "status" | "importedRowCount" | "warningCount" | "fileCount"
+      | "status"
+      | "importedRowCount"
+      | "warningCount"
+      | "fileCount"
+      | "auditSnapshotId"
+      | "auditedAt"
     >
   >;
 };
 
 type UploadBatchFindUniqueArgs = {
   where: { id: string };
+};
+
+type UploadBatchFindFirstArgs = {
+  where?: { id?: string; storeId?: string };
+  include?: {
+    auditSnapshot?: boolean;
+    uploadedFiles?: {
+      include?: { parsedRecords?: boolean };
+    };
+  };
+  select?: {
+    uploadedFiles?: unknown;
+    [key: string]: unknown;
+  };
 };
 
 type UploadedFileCreateArgs = {
@@ -1254,6 +1829,27 @@ type UploadedFileCreateArgs = {
   };
 };
 
+type UploadedFileFindManyArgs = {
+  where?: {
+    batch?: {
+      id?: string;
+      storeId?: string;
+    };
+  };
+  select?: Record<string, unknown>;
+};
+
+type UploadedFileFindFirstArgs = {
+  where?: {
+    id?: string;
+    batch?: {
+      id?: string;
+      storeId?: string;
+    };
+  };
+  select?: Record<string, unknown>;
+};
+
 type ParsedRecordCreateManyArgs = {
   data: Array<{
     uploadedFileId: string;
@@ -1267,6 +1863,7 @@ type ParsedRecordCreateManyArgs = {
 
 type ParsedRecordFindManyArgs = {
   where?: {
+    uploadedFileId?: string;
     uploadedFile?: {
       batch?: {
         storeId?: string;
@@ -1275,9 +1872,17 @@ type ParsedRecordFindManyArgs = {
     };
   };
   orderBy?: Array<Record<string, "asc" | "desc">>;
+  take?: number;
+  cursor?: { id: string };
+  skip?: number;
   include?: {
     uploadedFile?: boolean;
   };
+  select?: {
+    uploadedFile?: unknown;
+    [key: string]: unknown;
+  };
+  distinct?: Array<"normalizedType">;
 };
 
 type ParsedRecordCountArgs = {
@@ -1286,6 +1891,7 @@ type ParsedRecordCountArgs = {
 
 type CatalogSnapshotFindFirstArgs = {
   where?: {
+    id?: string;
     storeId?: string;
     syncStatus?: SyncStatus;
   };
@@ -1321,9 +1927,16 @@ type AuditFindingFindManyArgs = {
     storeId?: string;
     batchId?: string | null;
     severity?: FindingSeverity;
-    category?: FindingCategory | { in: FindingCategory[] };
+    category?:
+      FindingCategory | { in: FindingCategory[] } | { not: FindingCategory };
   };
   orderBy?: Array<Record<string, "asc" | "desc">>;
+};
+
+type AuditFindingGroupByArgs = {
+  by: Array<"severity" | "category">;
+  where?: AuditFindingFindManyArgs["where"];
+  _count: { _all: true };
 };
 
 type AuditFindingCountArgs = {
@@ -1369,7 +1982,14 @@ function installInMemoryPrisma() {
     exportJobs: [],
   };
   const mutableDb = db as unknown as Record<string, unknown>;
+  const queryStats = {
+    parsedRecordFindMany: [] as Array<{
+      take: number | null;
+      distinct: boolean;
+    }>,
+  };
   const patchedKeys = [
+    "$transaction",
     "store",
     "uploadBatch",
     "uploadedFile",
@@ -1393,6 +2013,9 @@ function installInMemoryPrisma() {
       installed: true,
       scopes: "read_products,read_inventory,read_locations",
       billingStatus: BillingStatus.ACTIVE,
+      billingPlan: "Stocky Review Test",
+      billingCheckedAt: now(),
+      billingEndedAt: null,
       createdAt: now(),
       updatedAt: now(),
       uninstalledAt: null,
@@ -1438,15 +2061,20 @@ function installInMemoryPrisma() {
   };
 
   mutableDb.store = {};
+  mutableDb.$transaction = async (
+    callback: (client: typeof db) => Promise<unknown>,
+  ) => callback(db);
   mutableDb.uploadBatch = {
     create: async ({ data }: UploadBatchCreateArgs) => {
       const batch: UploadBatchRow = {
         id: nextId("batch"),
         storeId: data.storeId,
+        auditSnapshotId: null,
         status: data.status ?? UploadBatchStatus.PENDING,
         fileCount: data.fileCount ?? 0,
         importedRowCount: 0,
         warningCount: 0,
+        auditedAt: null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -1465,6 +2093,47 @@ function installInMemoryPrisma() {
       const batch = state.uploadBatches.find((row) => row.id === where.id);
 
       return batch ? withUploadedFiles(batch, state) : null;
+    },
+    findFirst: async ({
+      where,
+      include,
+      select,
+    }: UploadBatchFindFirstArgs = {}) => {
+      const batch = state.uploadBatches.find(
+        (row) =>
+          (!where?.id || row.id === where.id) &&
+          (!where?.storeId || row.storeId === where.storeId),
+      );
+
+      if (!batch) {
+        return null;
+      }
+
+      if (include?.uploadedFiles || select?.uploadedFiles) {
+        return {
+          ...withUploadedFiles(batch, state),
+          ...(include?.auditSnapshot
+            ? {
+                auditSnapshot:
+                  state.catalogSnapshots.find(
+                    (snapshot) => snapshot.id === batch.auditSnapshotId,
+                  ) ?? null,
+              }
+            : {}),
+        };
+      }
+
+      if (!include?.auditSnapshot) {
+        return batch ?? null;
+      }
+
+      return {
+        ...batch,
+        auditSnapshot:
+          state.catalogSnapshots.find(
+            (snapshot) => snapshot.id === batch.auditSnapshotId,
+          ) ?? null,
+      };
     },
   };
   mutableDb.uploadedFile = {
@@ -1489,6 +2158,29 @@ function installInMemoryPrisma() {
       state.uploadedFiles.push(file);
       return file;
     },
+    findMany: async ({ where }: UploadedFileFindManyArgs = {}) =>
+      state.uploadedFiles.filter((file) => {
+        const batch = state.uploadBatches.find(
+          (candidate) => candidate.id === file.batchId,
+        );
+
+        return (
+          (!where?.batch?.id || batch?.id === where.batch.id) &&
+          (!where?.batch?.storeId || batch?.storeId === where.batch.storeId)
+        );
+      }),
+    findFirst: async ({ where }: UploadedFileFindFirstArgs = {}) =>
+      state.uploadedFiles.find((file) => {
+        const batch = state.uploadBatches.find(
+          (candidate) => candidate.id === file.batchId,
+        );
+
+        return (
+          (!where?.id || file.id === where.id) &&
+          (!where?.batch?.id || batch?.id === where.batch.id) &&
+          (!where?.batch?.storeId || batch?.storeId === where.batch.storeId)
+        );
+      }) ?? null,
   };
   mutableDb.parsedRecord = {
     createMany: async ({ data }: ParsedRecordCreateManyArgs) => {
@@ -1510,16 +2202,46 @@ function installInMemoryPrisma() {
     findMany: async (
       args: ParsedRecordFindManyArgs = {},
     ): Promise<Array<ParsedRecordRow | ParsedRecordWithFile>> => {
+      queryStats.parsedRecordFindMany.push({
+        take: args.take ?? null,
+        distinct: Boolean(args.distinct?.length),
+      });
       const storeId = args.where?.uploadedFile?.batch?.storeId;
       const batchId = args.where?.uploadedFile?.batch?.id;
       let rows = state.parsedRecords.filter(
         (record) =>
+          (!args.where?.uploadedFileId ||
+            record.uploadedFileId === args.where.uploadedFileId) &&
           (!storeId || recordBelongsToStore(record, storeId, state)) &&
           (!batchId || recordBelongsToBatch(record, batchId, state)),
       );
       rows = sortRows(rows, args.orderBy);
 
-      if (!args.include?.uploadedFile) {
+      if (args.distinct?.includes("normalizedType")) {
+        const seen = new Set<StockyReportType>();
+        rows = rows.filter((record) => {
+          if (seen.has(record.normalizedType)) return false;
+          seen.add(record.normalizedType);
+          return true;
+        });
+      }
+
+      if (args.cursor) {
+        const cursorIndex = rows.findIndex(
+          (record) => record.id === args.cursor?.id,
+        );
+        rows = rows.slice(
+          cursorIndex >= 0 ? cursorIndex + (args.skip ?? 0) : 0,
+        );
+      } else if (args.skip) {
+        rows = rows.slice(args.skip);
+      }
+
+      if (args.take !== undefined) {
+        rows = rows.slice(0, args.take);
+      }
+
+      if (!args.include?.uploadedFile && !args.select?.uploadedFile) {
         return rows;
       }
 
@@ -1546,6 +2268,10 @@ function installInMemoryPrisma() {
   mutableDb.shopifyCatalogSnapshot = {
     findFirst: async (args: CatalogSnapshotFindFirstArgs = {}) => {
       let rows = state.catalogSnapshots.filter((snapshot) => {
+        if (args.where?.id && snapshot.id !== args.where.id) {
+          return false;
+        }
+
         if (args.where?.storeId && snapshot.storeId !== args.where.storeId) {
           return false;
         }
@@ -1600,6 +2326,31 @@ function installInMemoryPrisma() {
       state.auditFindings.filter((finding) =>
         matchesAuditFindingWhere(finding, args.where),
       ).length,
+    groupBy: async (args: AuditFindingGroupByArgs) => {
+      const groups = new Map<
+        string,
+        {
+          severity: FindingSeverity;
+          category: FindingCategory;
+          _count: { _all: number };
+        }
+      >();
+
+      for (const finding of state.auditFindings.filter((candidate) =>
+        matchesAuditFindingWhere(candidate, args.where),
+      )) {
+        const key = `${finding.severity}|${finding.category}`;
+        const group = groups.get(key) ?? {
+          severity: finding.severity,
+          category: finding.category,
+          _count: { _all: 0 },
+        };
+        group._count._all += 1;
+        groups.set(key, group);
+      }
+
+      return [...groups.values()];
+    },
   };
   mutableDb.exportJob = {
     create: async ({ data }: ExportJobCreateArgs) => {
@@ -1628,6 +2379,7 @@ function installInMemoryPrisma() {
 
   return {
     state,
+    queryStats,
     createStore,
     seedCatalogSnapshot,
     restore() {
@@ -1723,7 +2475,11 @@ function matchesAuditFindingWhere(
 
   if ("category" in where && where.category) {
     if (typeof where.category === "object") {
-      return where.category.in.includes(finding.category);
+      if ("in" in where.category) {
+        return where.category.in.includes(finding.category);
+      }
+
+      return finding.category !== where.category.not;
     }
 
     return finding.category === where.category;

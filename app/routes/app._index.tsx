@@ -2,6 +2,7 @@ import type {
   ExportType,
   FindingCategory,
   FindingSeverity,
+  Prisma,
 } from "@prisma/client";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -12,6 +13,7 @@ import type {
 } from "react-router";
 import {
   Form,
+  Link,
   useActionData,
   useFetcher,
   useLoaderData,
@@ -26,19 +28,32 @@ import { regenerateAuditFindings } from "../lib/audit.server";
 import {
   getOwnedUploadBatch,
   requireOwnedUploadBatch,
+  uploadBatchOverviewInclude,
 } from "../lib/batches.server";
-import { syncShopifyCatalog } from "../lib/catalog.server";
+import {
+  getCatalogVariantLimit,
+  syncShopifyCatalog,
+} from "../lib/catalog.server";
+import {
+  UploadLimitError,
+  canGenerateExport,
+  resolveBillingAccess,
+} from "../lib/entitlements.server";
 import {
   RESET_CONFIRMATION,
+  ResetConfirmationError,
   resetStoreMigrationData,
 } from "../lib/reset.server";
+import {
+  RequestSizeLimitError,
+  readFormDataWithinLimit,
+} from "../lib/request-size.server";
 import { importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
   getActiveBillingName,
   getPartnerBillingCheckForAdmin,
   getPlanSelectionUrl,
-  hasActiveBillingSubscription,
   updateStoreBillingStatus,
 } from "../models/billing.server";
 import { upsertInstalledStore } from "../models/store.server";
@@ -80,6 +95,8 @@ const FINDING_CATEGORIES = [
   "PARSE_ERROR",
 ] as const satisfies readonly FindingCategory[];
 
+const FINDING_DISPLAY_LIMIT = 500;
+
 const EXPORT_DETAILS: Record<
   ExportType,
   { label: string; description: string }
@@ -120,24 +137,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shop: session.shop,
     billingCheck,
   });
-  const billingActive = hasActiveBillingSubscription(billingCheck);
+  const billingAccess = resolveBillingAccess({
+    billingCheck,
+    billingStatus,
+    storedPlan: store.billingPlan,
+    storedCheckedAt: store.billingCheckedAt,
+  });
 
-  if (!billingActive) {
+  if (!billingAccess.active && billingStatus !== "CANCELED") {
     throw redirect(getPlanSelectionUrl(session.shop), { target: "_top" });
   }
 
   const url = new URL(request.url);
   const requestedBatchId = url.searchParams.get("batch");
-  const [batches, latestSnapshot] = await Promise.all([
+  const [batches, latestSyncAttempt, storageAggregate] = await Promise.all([
     db.uploadBatch.findMany({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
       take: 25,
-      include: { uploadedFiles: { orderBy: { createdAt: "asc" } } },
+      include: uploadBatchOverviewInclude,
     }),
     db.shopifyCatalogSnapshot.findFirst({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        syncStatus: true,
+        productCount: true,
+        variantCount: true,
+        inventoryItemCount: true,
+        inventoryLevelCount: true,
+        locationCount: true,
+        errorMessage: true,
+        syncedAt: true,
+        createdAt: true,
+      },
+    }),
+    db.uploadedFile.aggregate({
+      where: { batch: { storeId: store.id } },
+      _sum: { rawContentByteLength: true },
     }),
   ]);
   const selectedBatch = requestedBatchId
@@ -146,9 +184,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         batchId: requestedBatchId,
       })
     : (batches[0] ?? null);
-  const findingWhere = selectedBatch
-    ? { storeId: store.id, batchId: selectedBatch.id }
-    : { storeId: store.id, batchId: "__no_batch__" };
+  const displaySnapshot = selectedBatch
+    ? selectedBatch.auditSnapshot
+    : latestSyncAttempt;
+  const findingWhere: Prisma.AuditFindingWhereInput = {
+    storeId: store.id,
+    batchId: selectedBatch?.id ?? "__no_batch__",
+    category: billingAccess.entitlements.locationAudit
+      ? undefined
+      : { not: "LOCATION_MISMATCH" },
+  };
   const [findingGroups, findings, exportJobs] = await Promise.all([
     db.auditFinding.groupBy({
       by: ["severity", "category"],
@@ -158,6 +203,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.auditFinding.findMany({
       where: findingWhere,
       orderBy: [{ severity: "asc" }, { createdAt: "desc" }],
+      take: FINDING_DISPLAY_LIMIT,
     }),
     db.exportJob.findMany({
       where: selectedBatch
@@ -172,31 +218,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   for (const group of findingGroups) {
     severityCounts[group.severity] += group._count._all;
   }
+  const findingTotal = Object.values(severityCounts).reduce(
+    (total, count) => total + count,
+    0,
+  );
 
   return {
     shop: session.shop,
     scopes: session.scope ?? "read_products,read_inventory,read_locations",
     billing: {
-      active: billingActive,
+      active: billingAccess.active,
       status: billingStatus,
-      activePlan: getActiveBillingName(billingCheck),
+      activePlan: getActiveBillingName(billingCheck) ?? store.billingPlan,
+      usingLastVerifiedStatus: billingAccess.usingLastVerifiedStatus,
     },
+    entitlements: billingAccess.entitlements,
+    storage: {
+      usedBytes: storageAggregate._sum.rawContentByteLength ?? 0,
+      maxBytes: billingAccess.entitlements.maxStoredBytes,
+    },
+    catalogVariantLimit: getCatalogVariantLimit(),
     billingPlans: BILLING_PLAN_DETAILS,
     batches: batches.map(serializeBatch),
     selectedBatch: selectedBatch ? serializeBatch(selectedBatch) : null,
-    latestSnapshot: latestSnapshot
+    latestSnapshot: displaySnapshot
       ? {
-          status: latestSnapshot.syncStatus,
-          productCount: latestSnapshot.productCount,
-          variantCount: latestSnapshot.variantCount,
-          inventoryItemCount: latestSnapshot.inventoryItemCount,
-          inventoryLevelCount: latestSnapshot.inventoryLevelCount,
-          locationCount: latestSnapshot.locationCount,
-          errorMessage: latestSnapshot.errorMessage,
-          syncedAt: latestSnapshot.syncedAt?.toISOString() ?? null,
+          id: displaySnapshot.id,
+          status: displaySnapshot.syncStatus,
+          productCount: displaySnapshot.productCount,
+          variantCount: displaySnapshot.variantCount,
+          inventoryItemCount: displaySnapshot.inventoryItemCount,
+          inventoryLevelCount: displaySnapshot.inventoryLevelCount,
+          locationCount: displaySnapshot.locationCount,
+          errorMessage: displaySnapshot.errorMessage,
+          syncedAt: displaySnapshot.syncedAt?.toISOString() ?? null,
+        }
+      : null,
+    latestSyncAttempt: latestSyncAttempt
+      ? {
+          id: latestSyncAttempt.id,
+          status: latestSyncAttempt.syncStatus,
+          errorMessage: latestSyncAttempt.errorMessage,
+          createdAt: latestSyncAttempt.createdAt.toISOString(),
         }
       : null,
     severityCounts,
+    findingTotal,
     findingGroups: findingGroups.map((group) => ({
       severity: group.severity,
       category: group.category,
@@ -215,6 +282,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     exports: EXPORT_TYPES.map((type) => ({
       type,
       ...EXPORT_DETAILS[type],
+      available:
+        billingAccess.active &&
+        canGenerateExport(billingAccess.entitlements, type),
     })),
     exportJobs: exportJobs.map((job) => ({
       id: job.id,
@@ -235,20 +305,70 @@ export const action = async ({
     shop: session.shop,
     scopes: session.scope ?? null,
   });
-  const formData = await request.formData();
+  const billingCheck = await getPartnerBillingCheckForAdmin({
+    admin,
+    shop: session.shop,
+  });
+  const billingStatus = await updateStoreBillingStatus({
+    shop: session.shop,
+    billingCheck,
+  });
+  const billingAccess = resolveBillingAccess({
+    billingCheck,
+    billingStatus,
+    storedPlan: store.billingPlan,
+    storedCheckedAt: store.billingCheckedAt,
+  });
+  const requestLimit = billingAccess.active
+    ? billingAccess.entitlements.maxBatchBytes + 2 * 1024 * 1024
+    : 1024 * 1024;
+
+  let formData: FormData;
+
+  try {
+    formData = await readFormDataWithinLimit(request, requestLimit);
+  } catch (error) {
+    if (!(error instanceof RequestSizeLimitError)) throw error;
+
+    return {
+      status: "error",
+      message: billingAccess.active
+        ? `The upload request exceeds the ${formatBytes(billingAccess.entitlements.maxBatchBytes)} run limit for ${billingAccess.entitlements.label}.`
+        : "Reactivate the subscription before uploading files.",
+    };
+  }
   const intent = String(formData.get("intent") ?? "");
 
   if (intent === "select_plan") {
     return redirect(getPlanSelectionUrl(session.shop), { target: "_top" });
   }
 
-  const billingCheck = await getPartnerBillingCheckForAdmin({
-    admin,
-    shop: session.shop,
-  });
-  await updateStoreBillingStatus({ shop: session.shop, billingCheck });
+  if (intent === "reset_store_data") {
+    try {
+      const result = await resetStoreMigrationData({
+        storeId: store.id,
+        confirmation: String(formData.get("confirmation") ?? ""),
+      });
+      return {
+        status: "success",
+        message: `Deleted ${result.uploadBatches} migration runs, ${result.catalogSnapshots} catalog snapshots, ${result.auditFindings} findings, and ${result.exportJobs} export records. Installation and billing were preserved.`,
+      };
+    } catch (error) {
+      if (!(error instanceof ResetConfirmationError)) {
+        console.error("Store migration-data reset failed.", error);
+      }
 
-  if (!hasActiveBillingSubscription(billingCheck)) {
+      return {
+        status: "error",
+        message:
+          error instanceof ResetConfirmationError
+            ? error.message
+            : "Migration data could not be reset. Try again or contact support.",
+      };
+    }
+  }
+
+  if (!billingAccess.active) {
     return {
       status: "error",
       message: "Choose an active Shopify App Pricing subscription first.",
@@ -269,17 +389,42 @@ export const action = async ({
       };
     }
 
-    const result = await importStockyCsvFiles({ storeId: store.id, files });
-    return {
-      status:
-        result.failedFileCount === 0
-          ? "success"
-          : result.importedRowCount > 0
-            ? "partial"
-            : "error",
-      batchId: result.batchId,
-      message: `Processed ${result.fileCount} files as one run: ${result.importedRowCount} rows imported, ${result.warningCount} warnings, ${result.failedFileCount} failed file${result.failedFileCount === 1 ? "" : "s"}.`,
-    };
+    const storageAggregate = await db.uploadedFile.aggregate({
+      where: { batch: { storeId: store.id } },
+      _sum: { rawContentByteLength: true },
+    });
+
+    try {
+      const result = await importStockyCsvFiles({
+        storeId: store.id,
+        files,
+        entitlements: billingAccess.entitlements,
+        currentStoredBytes: storageAggregate._sum.rawContentByteLength ?? 0,
+        includeLocationMismatches: billingAccess.entitlements.locationAudit,
+      });
+      return {
+        status:
+          result.failedFileCount === 0
+            ? "success"
+            : result.importedRowCount > 0
+              ? "partial"
+              : "error",
+        batchId: result.batchId,
+        message: `Processed ${result.fileCount} files as one run: ${result.importedRowCount} rows imported, ${result.warningCount} warnings, ${result.failedFileCount} failed file${result.failedFileCount === 1 ? "" : "s"}.`,
+      };
+    } catch (error) {
+      if (!(error instanceof UploadLimitError)) {
+        console.error("Stocky CSV upload failed.", error);
+      }
+
+      return {
+        status: "error",
+        message:
+          error instanceof UploadLimitError
+            ? error.message
+            : "The upload could not be completed. Try again or contact support with the run time and filenames.",
+      };
+    }
   }
 
   if (intent === "sync_catalog") {
@@ -297,30 +442,14 @@ export const action = async ({
     const audit = await regenerateAuditFindings({
       storeId: store.id,
       batchId: batch.id,
+      snapshotId: snapshot.id,
+      includeLocationMismatches: billingAccess.entitlements.locationAudit,
     });
     return {
       status: "success",
       batchId: batch.id,
       message: `Synced ${snapshot.variantCount} variants across ${snapshot.locationCount} locations and generated ${audit.created} findings for this run.`,
     };
-  }
-
-  if (intent === "reset_store_data") {
-    try {
-      const result = await resetStoreMigrationData({
-        storeId: store.id,
-        confirmation: String(formData.get("confirmation") ?? ""),
-      });
-      return {
-        status: "success",
-        message: `Deleted ${result.uploadBatches} migration runs, ${result.catalogSnapshots} catalog snapshots, ${result.auditFindings} findings, and ${result.exportJobs} export records. Installation and billing were preserved.`,
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        message: error instanceof Error ? error.message : "Reset failed.",
-      };
-    }
   }
 
   return { status: "error", message: "Unknown action." };
@@ -330,16 +459,20 @@ export default function Index() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const location = useLocation();
+  const navigate = useNavigate();
   const params = useParams();
   const url = new URLSearchParams(location.search);
   const requestedView = params.view ?? url.get("view");
-  const [view, setView] = useState<View>(() =>
-    VIEWS.includes(requestedView as View)
-      ? (requestedView as View)
-      : "overview",
-  );
+  const view: View = VIEWS.includes(requestedView as View)
+    ? (requestedView as View)
+    : "overview";
   const selectedBatchId = data.selectedBatch?.id ?? null;
-  const shared = { data, selectedBatchId, onViewChange: setView };
+  const shared = {
+    data,
+    selectedBatchId,
+    onViewChange: (nextView: View) =>
+      navigate(viewHref(nextView, selectedBatchId)),
+  };
 
   return (
     <s-page heading="Stocky Escape Kit">
@@ -364,18 +497,20 @@ export default function Index() {
 
         <nav className={styles.tabs} aria-label="Migration workspace">
           {VIEWS.map((item) => (
-            <button
-              type="button"
+            <Link
               key={item}
+              to={viewHref(item, selectedBatchId)}
               className={item === view ? styles.activeTab : styles.tab}
-              onClick={() => setView(item)}
               aria-current={item === view ? "page" : undefined}
             >
               {viewLabel(item)}
-            </button>
+            </Link>
           ))}
         </nav>
 
+        {!data.billing.active || data.billing.usingLastVerifiedStatus ? (
+          <BillingBanner data={data} />
+        ) : null}
         {actionData ? <StatusBanner data={actionData} /> : null}
 
         <main className={styles.main}>
@@ -396,31 +531,59 @@ function Overview({ data, onViewChange }: ViewProps) {
     (sum, count) => sum + count,
     0,
   );
-  const nextAction = !batch
+  const nextAction = !data.billing.active
     ? {
-        title: "Upload your Stocky exports",
-        detail: "Stage all related files and submit them as one migration run.",
-        view: "files" as const,
+        eyebrow: "Subscription ended",
+        title: "Download or delete your preserved data",
+        detail:
+          "Stored evidence remains readable. Reactivate to upload, sync, or generate new reports.",
+        view: "settings" as const,
       }
-    : !data.latestSnapshot || data.findings.length === 0
+    : !batch
       ? {
-          title: "Sync the Shopify catalog",
+          eyebrow: "Next action",
+          title: "Upload your Stocky exports",
           detail:
-            "Compare this run with current products, variants, inventory, and locations.",
+            "Stage all related files and submit them as one migration run.",
           view: "files" as const,
         }
-      : {
-          title: "Review critical findings",
-          detail:
-            "Resolve identity and matching gaps before relying on the export kit.",
-          view: "findings" as const,
-        };
+      : !data.latestSnapshot || data.latestSnapshot.status !== "SUCCEEDED"
+        ? {
+            eyebrow: "Next action",
+            title: "Sync the Shopify catalog",
+            detail:
+              "Build a complete, read-only product and location snapshot before matching this run.",
+            view: "files" as const,
+          }
+        : data.severityCounts.CRITICAL > 0
+          ? {
+              eyebrow: "Critical next action",
+              title: "Review critical findings",
+              detail:
+                "Resolve identity and matching gaps before relying on the export kit.",
+              view: "findings" as const,
+            }
+          : totalFindings > 0
+            ? {
+                eyebrow: "Review next",
+                title: "Review the remaining warnings and evidence",
+                detail:
+                  "No critical blockers remain. Confirm the non-blocking issues before handoff.",
+                view: "findings" as const,
+              }
+            : {
+                eyebrow: "Run ready",
+                title: "Download the migration record",
+                detail:
+                  "The current audit has no findings. Preserve the reports and source checksums for handoff.",
+                view: "exports" as const,
+              };
 
   return (
     <div className={styles.stack}>
       <section className={styles.nextAction}>
         <div>
-          <p className={styles.eyebrow}>Critical next action</p>
+          <p className={styles.eyebrow}>{nextAction.eyebrow}</p>
           <h3>{nextAction.title}</h3>
           <p>{nextAction.detail}</p>
         </div>
@@ -525,12 +688,16 @@ function Overview({ data, onViewChange }: ViewProps) {
                 <dd>{data.latestSnapshot.inventoryItemCount}</dd>
               </div>
               <div>
-                <dt>Inventory levels</dt>
-                <dd>{data.latestSnapshot.inventoryLevelCount}</dd>
-              </div>
-              <div>
                 <dt>Locations</dt>
                 <dd>{data.latestSnapshot.locationCount}</dd>
+              </div>
+              <div>
+                <dt>Completeness</dt>
+                <dd>
+                  {data.latestSnapshot.status === "SUCCEEDED"
+                    ? "Complete"
+                    : "Not verified"}
+                </dd>
               </div>
             </dl>
           ) : (
@@ -549,7 +716,36 @@ function Files({ data, selectedBatchId }: ViewProps) {
   const navigate = useNavigate();
   return (
     <div className={styles.stack}>
-      <FileStager key={selectedBatchId ?? "new-run"} />
+      <section className={styles.panel}>
+        <p className={styles.eyebrow}>Before Stocky access ends</p>
+        <h3>Preserve the reports that cannot migrate automatically</h3>
+        <ul className={styles.guidanceList}>
+          <li>Product or custom SKU/variant reports</li>
+          <li>Historical purchase orders and stocktakes</li>
+          <li>Inventory activity and historical cost reports</li>
+          <li>
+            Supplier evidence from purchase orders or custom SKU reports; Stocky
+            supplier records cannot be exported directly
+          </li>
+        </ul>
+        <p className={styles.inlineNotice}>
+          Catalog audits currently verify stores with up to{" "}
+          {data.catalogVariantLimit.toLocaleString()} Shopify variants. Larger
+          catalogs stop before findings are generated so partial results cannot
+          look complete; contact support before relying on this app for one.
+        </p>
+      </section>
+      {data.latestSyncAttempt?.status === "FAILED" ? (
+        <div className={styles.errorNotice} role="alert">
+          <strong>Latest Shopify sync failed.</strong>{" "}
+          {data.latestSyncAttempt.errorMessage ??
+            "Shopify did not return a complete catalog snapshot."}{" "}
+          {data.latestSnapshot?.status === "SUCCEEDED"
+            ? "The selected run remains linked to its last complete snapshot; retry before relying on a fresh audit."
+            : "Retry before relying on this run's audit."}
+        </div>
+      ) : null}
+      <FileStager key={selectedBatchId ?? "new-run"} data={data} />
       <section className={styles.panel}>
         <div className={styles.sectionHeading}>
           <div>
@@ -557,7 +753,10 @@ function Files({ data, selectedBatchId }: ViewProps) {
             <h3>Preserved source files</h3>
           </div>
           {data.selectedBatch ? (
-            <CatalogSync batchId={data.selectedBatch.id} />
+            <CatalogSync
+              batchId={data.selectedBatch.id}
+              disabled={!data.billing.active}
+            />
           ) : null}
         </div>
         {data.selectedBatch ? (
@@ -611,12 +810,14 @@ function Files({ data, selectedBatchId }: ViewProps) {
   );
 }
 
-function FileStager() {
+function FileStager({ data }: { data: LoaderData }) {
   const fetcher = useFetcher<ActionData>();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
   const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const stagedBytes = files.reduce((sum, file) => sum + file.size, 0);
 
   useEffect(() => {
     if (fetcher.data?.batchId) {
@@ -631,7 +832,34 @@ function FileStager() {
     const keys = new Set(files.map(fileKey));
     const additions = csv.filter((file) => !keys.has(fileKey(file)));
     const duplicateCount = csv.length - additions.length;
-    setFiles((current) => [...current, ...additions]);
+    const candidate = [...files, ...additions];
+    const oversized = candidate.find(
+      (file) => file.size > data.entitlements.maxFileBytes,
+    );
+    const candidateBytes = candidate.reduce((sum, file) => sum + file.size, 0);
+    let nextLimitMessage: string | null = null;
+
+    if (!data.billing.active) {
+      nextLimitMessage = "Reactivate the subscription before staging files.";
+    } else if (candidate.length > data.entitlements.maxFilesPerBatch) {
+      nextLimitMessage = `${data.entitlements.label} allows ${data.entitlements.maxFilesPerBatch} files in one run.`;
+    } else if (oversized) {
+      nextLimitMessage = `${oversized.name} exceeds the ${formatBytes(data.entitlements.maxFileBytes)} per-file limit.`;
+    } else if (candidateBytes > data.entitlements.maxBatchBytes) {
+      nextLimitMessage = `The staged files exceed the ${formatBytes(data.entitlements.maxBatchBytes)} per-run limit.`;
+    } else if (
+      data.storage.usedBytes + candidateBytes >
+      data.storage.maxBytes
+    ) {
+      nextLimitMessage =
+        "This run would exceed stored-data capacity. Download and reset an older run, or change plans.";
+    }
+
+    if (!nextLimitMessage) {
+      setFiles(candidate);
+    }
+
+    setLimitMessage(nextLimitMessage);
     setDuplicateMessage(
       duplicateCount
         ? `${duplicateCount} duplicate file${duplicateCount === 1 ? " was" : "s were"} not added.`
@@ -673,6 +901,7 @@ function FileStager() {
           type="file"
           accept=".csv,text/csv"
           multiple
+          disabled={!data.billing.active}
           onChange={(event) => event.target.files && stage(event.target.files)}
         />
         <label htmlFor="csvFiles">
@@ -683,6 +912,11 @@ function FileStager() {
       {duplicateMessage ? (
         <p className={styles.inlineNotice} role="status">
           {duplicateMessage}
+        </p>
+      ) : null}
+      {limitMessage ? (
+        <p className={styles.errorNotice} role="alert">
+          {limitMessage}
         </p>
       ) : null}
       {files.length ? (
@@ -696,11 +930,12 @@ function FileStager() {
               <button
                 type="button"
                 className={styles.textButton}
-                onClick={() =>
+                onClick={() => {
                   setFiles((current) =>
                     current.filter((item) => fileKey(item) !== fileKey(file)),
-                  )
-                }
+                  );
+                  setLimitMessage(null);
+                }}
               >
                 Remove<span className={styles.srOnly}> {file.name}</span>
               </button>
@@ -714,7 +949,9 @@ function FileStager() {
         <button
           className={styles.primaryButton}
           type="button"
-          disabled={!files.length || fetcher.state !== "idle"}
+          disabled={
+            !data.billing.active || !files.length || fetcher.state !== "idle"
+          }
           onClick={submit}
         >
           {fetcher.state === "idle"
@@ -722,7 +959,12 @@ function FileStager() {
             : "Uploading and parsing…"}
         </button>
         <span className={styles.muted}>
-          One submission creates one traceable UploadBatch.
+          {files.length}/{data.entitlements.maxFilesPerBatch} files ·{" "}
+          {formatBytes(stagedBytes)}/
+          {formatBytes(data.entitlements.maxBatchBytes)} this run ·{" "}
+          {data.entitlements.maxRowsPerBatch.toLocaleString()} parsed rows max ·{" "}
+          {formatBytes(data.storage.usedBytes)}/
+          {formatBytes(data.storage.maxBytes)} stored
         </span>
       </div>
       {fetcher.data ? <StatusBanner data={fetcher.data} /> : null}
@@ -730,14 +972,25 @@ function FileStager() {
   );
 }
 
-function CatalogSync({ batchId }: { batchId: string }) {
+function CatalogSync({
+  batchId,
+  disabled,
+}: {
+  batchId: string;
+  disabled: boolean;
+}) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
   return (
     <Form method="post">
       <input type="hidden" name="intent" value="sync_catalog" />
       <input type="hidden" name="batchId" value={batchId} />
-      <button className={styles.secondaryButton} type="submit" disabled={busy}>
+      <button
+        className={styles.secondaryButton}
+        type="submit"
+        disabled={busy || disabled}
+        title={disabled ? "Reactivate the subscription to sync." : undefined}
+      >
         {busy ? "Syncing…" : "Sync Shopify and audit"}
       </button>
     </Form>
@@ -772,7 +1025,7 @@ function FilesTable({ files }: { files: SerializedBatch["files"] }) {
                   </small>
                 ) : null}
               </td>
-              <td>{humanize(file.reportType)}</td>
+              <td>{reportTypeLabel(file.reportType)}</td>
               <td>
                 <StatusPill value={file.status} />
               </td>
@@ -844,7 +1097,7 @@ function Findings({ data, selectedBatchId }: ViewProps) {
             <h3>Audit findings</h3>
           </div>
           <span className={styles.countLabel}>
-            {filtered.length} of {data.findings.length}
+            {filtered.length} shown of {data.findingTotal}
           </span>
         </div>
         <div className={styles.filters}>
@@ -878,7 +1131,11 @@ function Findings({ data, selectedBatchId }: ViewProps) {
               onChange={(event) => setCategory(event.target.value)}
             >
               <option value="ALL">All categories</option>
-              {FINDING_CATEGORIES.map((item) => (
+              {FINDING_CATEGORIES.filter(
+                (item) =>
+                  data.entitlements.locationAudit ||
+                  item !== "LOCATION_MISMATCH",
+              ).map((item) => (
                 <option key={item} value={item}>
                   {humanize(item)}
                 </option>
@@ -886,10 +1143,27 @@ function Findings({ data, selectedBatchId }: ViewProps) {
             </select>
           </label>
         </div>
+        {data.findingTotal > data.findings.length ? (
+          <p className={styles.inlineNotice}>
+            To keep this page responsive, it shows the first{" "}
+            {data.findings.length.toLocaleString()} findings, ordered by
+            severity. Download the complete SKU gap report for every catalog
+            finding in this run.
+          </p>
+        ) : null}
         {!selectedBatchId ? (
           <EmptyState
             title="No run selected"
             detail="Choose a migration run to see its findings."
+          />
+        ) : data.findings.length === 0 ? (
+          <EmptyState
+            title="No audit findings"
+            detail={
+              data.latestSnapshot?.status === "SUCCEEDED"
+                ? "This run has no matching, metadata, supplier, purchase-order, or location issues against its linked Shopify snapshot. Download the migration record for handoff."
+                : "No file-level findings were found. Sync Shopify from Files to generate catalog-matching findings."
+            }
           />
         ) : filtered.length ? (
           <div className={styles.findingList}>
@@ -922,6 +1196,8 @@ function Findings({ data, selectedBatchId }: ViewProps) {
 }
 
 function Exports({ data, selectedBatchId }: ViewProps) {
+  const reviewKitAvailable = data.billing.active;
+
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
@@ -930,16 +1206,18 @@ function Exports({ data, selectedBatchId }: ViewProps) {
             <p className={styles.eyebrow}>Review handoff</p>
             <h3>Download the complete review kit</h3>
             <p>
-              One ZIP with all four CSV reports plus a SHA-256 checksum
-              manifest.
+              One ZIP with every preserved original CSV, all four generated
+              reports, and a SHA-256 checksum manifest.
             </p>
           </div>
-          {selectedBatchId ? (
+          {selectedBatchId && reviewKitAvailable ? (
             <AuthenticatedDownloadButton
               label="Download review kit"
               path={`/app/review-kit?batch=${encodeURIComponent(selectedBatchId)}`}
               primary
             />
+          ) : selectedBatchId ? (
+            <span className={styles.lockedLabel}>Reactivate plan</span>
           ) : null}
         </div>
         {!selectedBatchId ? (
@@ -956,13 +1234,15 @@ function Exports({ data, selectedBatchId }: ViewProps) {
               <h3>{item.label}</h3>
               <p>{item.description}</p>
             </div>
-            {selectedBatchId ? (
+            {selectedBatchId && item.available ? (
               <AuthenticatedDownloadButton
                 label="Download CSV"
                 path={`/app/exports/${item.type}?batch=${encodeURIComponent(selectedBatchId)}`}
               />
+            ) : selectedBatchId ? (
+              <span className={styles.lockedLabel}>Reactivate plan</span>
             ) : (
-              <button disabled>Download CSV</button>
+              <button disabled>Choose a run</button>
             )}
           </article>
         ))}
@@ -1029,9 +1309,14 @@ function Settings({ data }: { data: LoaderData }) {
           <StatusPill value={data.billing.status} />
         </div>
         <p>
-          Current plan:{" "}
-          <strong>{data.billing.activePlan ?? "Active Shopify plan"}</strong>.
-          Plan changes are completed securely through Shopify App Pricing.
+          {data.billing.active ? "Current" : "Most recent"} plan:{" "}
+          <strong>
+            {data.billing.activePlan ?? "Shopify App Pricing plan"}
+          </strong>
+          .
+          {data.billing.active
+            ? " Plan changes are completed securely through Shopify App Pricing."
+            : " New uploads, catalog syncs, and generated reports are paused. Your existing source files and findings remain available so you can download or delete them."}
         </p>
         <Form method="post">
           <input type="hidden" name="intent" value="select_plan" />
@@ -1041,13 +1326,68 @@ function Settings({ data }: { data: LoaderData }) {
         </Form>
       </section>
       <section className={styles.panel}>
+        <p className={styles.eyebrow}>Current allowances</p>
+        <h3>{data.entitlements.label} migration capacity</h3>
+        <dl className={styles.definitionList}>
+          <div>
+            <dt>Files per run</dt>
+            <dd>{data.entitlements.maxFilesPerBatch}</dd>
+          </div>
+          <div>
+            <dt>Largest file</dt>
+            <dd>{formatBytes(data.entitlements.maxFileBytes)}</dd>
+          </div>
+          <div>
+            <dt>Rows per file</dt>
+            <dd>{data.entitlements.maxRowsPerFile.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>Parsed rows per run</dt>
+            <dd>{data.entitlements.maxRowsPerBatch.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>Stored source data</dt>
+            <dd>
+              {formatBytes(data.storage.usedBytes)} of{" "}
+              {formatBytes(data.storage.maxBytes)}
+            </dd>
+          </div>
+          <div>
+            <dt>Location mismatch audit</dt>
+            <dd>Included</dd>
+          </div>
+          <div>
+            <dt>All reports and review kit</dt>
+            <dd>Included</dd>
+          </div>
+          <div>
+            <dt>Verified Shopify catalog</dt>
+            <dd>
+              Up to {data.catalogVariantLimit.toLocaleString()} variants; larger
+              catalogs fail without a partial audit
+            </dd>
+          </div>
+        </dl>
+        <div className={styles.planGrid} aria-label="Shopify App Pricing plans">
+          {data.billingPlans.map((plan) => (
+            <article key={plan.id}>
+              <strong>
+                {plan.name} · {plan.price}
+              </strong>
+              <span>{plan.summary}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className={styles.panel}>
         <p className={styles.eyebrow}>Data retention</p>
         <h3>What Stocky Escape Kit keeps</h3>
         <p>
           Raw CSV bytes, file checksums, parsed rows, catalog snapshots,
           findings, and export history stay with this store until you reset
-          them. Installation, billing, scopes, and Shopify sessions are
-          operational records and are not part of this reset.
+          them. A canceled subscription stays read-only so you can retrieve or
+          delete this evidence. Uninstalling the app immediately deletes the
+          store record and its migration data.
         </p>
         <p>
           The app uses read-only Shopify GraphQL access and never imports
@@ -1187,6 +1527,39 @@ function StatusBanner({ data }: { data: ActionData }) {
     </div>
   );
 }
+function BillingBanner({ data }: { data: LoaderData }) {
+  const planLink = (
+    <Form method="post">
+      <input type="hidden" name="intent" value="select_plan" />
+      <button className={styles.secondaryButton} type="submit">
+        {data.billing.active ? "Verify plan" : "Reactivate plan"}
+      </button>
+    </Form>
+  );
+
+  return (
+    <section
+      className={
+        data.billing.active ? styles.billingNotice : styles.billingWarning
+      }
+      role={data.billing.active ? "status" : "alert"}
+    >
+      <div>
+        <strong>
+          {data.billing.active
+            ? "Shopify billing could not be refreshed"
+            : "Subscription ended — stored evidence is read-only"}
+        </strong>
+        <p>
+          {data.billing.active
+            ? "Existing paid access is using the last verified active status for a bounded 24-hour grace period while the Partner API is unavailable."
+            : "You can review findings, download original CSV files, or permanently reset the data. Reactivate to upload, sync, or generate reports."}
+        </p>
+      </div>
+      {planLink}
+    </section>
+  );
+}
 function SourceContext({ source }: { source: unknown }) {
   if (!source || typeof source !== "object" || Array.isArray(source))
     return null;
@@ -1194,11 +1567,19 @@ function SourceContext({ source }: { source: unknown }) {
   const filename = typeof value.filename === "string" ? value.filename : null;
   const row =
     typeof value.sourceRowNumber === "number" ? value.sourceRowNumber : null;
-  if (!filename && !row) return null;
+  const rows = Array.isArray(value.sourceRowNumbers)
+    ? value.sourceRowNumbers.filter(
+        (item): item is number => typeof item === "number",
+      )
+    : [];
+  if (!filename && !row && rows.length === 0) return null;
   return (
     <p className={styles.source}>
       Source: {filename ?? "Stocky export"}
       {row ? ` · row ${row}` : ""}
+      {rows.length > 0
+        ? ` · rows ${rows.slice(0, 8).join(", ")}${rows.length > 8 ? ` (+${rows.length - 8} more)` : ""}`
+        : ""}
     </p>
   );
 }
@@ -1233,8 +1614,10 @@ function AuthenticatedDownloadButton({
       const link = document.createElement("a");
       link.href = url;
       link.download = filename;
+      document.body.append(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (downloadError) {
       setError(
         downloadError instanceof Error
@@ -1275,6 +1658,8 @@ function serializeBatch(
     fileCount: batch.fileCount,
     importedRowCount: batch.importedRowCount,
     warningCount: batch.warningCount,
+    auditedAt: batch.auditedAt?.toISOString() ?? null,
+    auditSnapshotId: batch.auditSnapshotId,
     createdAt: batch.createdAt.toISOString(),
     files: batch.uploadedFiles.map((file) => ({
       id: file.id,
@@ -1284,7 +1669,9 @@ function serializeBatch(
       rowCount: file.rowCount,
       warningCount: file.warningCount,
       errorMessage: file.errorMessage,
-      rawCsvDownloadHref: file.rawContentBase64
+      rawCsvDownloadHref: file.storagePointer.startsWith(
+        "db:uploaded_file.rawContentBase64",
+      )
         ? `/app/uploads/${file.id}/raw`
         : null,
       rawContentByteLength: file.rawContentByteLength,
@@ -1328,10 +1715,26 @@ function formatRunName(value: string) {
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 function fileKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function reportTypeLabel(value: string) {
+  if (value === "VENDORS") {
+    return "Custom supplier evidence";
+  }
+
+  if (value === "UNKNOWN") {
+    return "Unclassified evidence";
+  }
+
+  return humanize(value);
 }
 
 export const headers: HeadersFunction = (headersArgs) =>

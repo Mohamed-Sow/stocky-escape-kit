@@ -2,6 +2,13 @@ import db from "../db.server";
 
 export const RESET_CONFIRMATION = "DELETE MIGRATION DATA";
 
+export class ResetConfirmationError extends Error {
+  constructor() {
+    super(`Type ${RESET_CONFIRMATION} to confirm the reset.`);
+    this.name = "ResetConfirmationError";
+  }
+}
+
 export async function resetStoreMigrationData({
   storeId,
   confirmation,
@@ -12,7 +19,7 @@ export async function resetStoreMigrationData({
   database?: Pick<typeof db, "$transaction">;
 }) {
   if (confirmation !== RESET_CONFIRMATION) {
-    throw new Error(`Type ${RESET_CONFIRMATION} to confirm the reset.`);
+    throw new ResetConfirmationError();
   }
 
   return database.$transaction(async (transaction) => {

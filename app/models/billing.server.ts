@@ -67,6 +67,7 @@ export type PartnerBillingSubscription = {
 
 export type PartnerBillingCheck = {
   active: boolean;
+  verified?: boolean;
   shop: string;
   shopId: string | null;
   source: "Partner API activeSubscription";
@@ -136,21 +137,24 @@ export const BILLING_PLAN_DETAILS = [
     name: PUBLIC_BILLING_PLANS.basic,
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.basic,
     price: "$99/mo",
-    summary: "Migration archive, parser, catalog match, and core gap reports.",
+    summary:
+      "All migration reports and the review kit; up to 10 files, 10 MB, and 40,000 parsed rows per run.",
   },
   {
     id: "pro",
     name: PUBLIC_BILLING_PLANS.pro,
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.pro,
     price: "$199/mo",
-    summary: "Adds supplier reconstruction and all export formats.",
+    summary:
+      "The same complete workflow with up to 20 files, 15 MB, and 60,000 parsed rows per run.",
   },
   {
     id: "plus",
     name: PUBLIC_BILLING_PLANS.plus,
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.plus,
     price: "$299/mo",
-    summary: "Adds multi-location reporting and priority checklist output.",
+    summary:
+      "The same complete workflow with up to 30 files, 20 MB, and 75,000 parsed rows per run.",
   },
 ] as const;
 
@@ -322,11 +326,26 @@ export async function getPartnerBillingCheckForAdmin({
   admin: AdminGraphqlClient;
   shop: string;
 }) {
-  const identity = await getAdminShopIdentity(admin);
+  let shopId: string;
+
+  try {
+    const identity = await getAdminShopIdentity(admin);
+    shopId = identity.id;
+  } catch (error) {
+    return inactivePartnerBillingCheck({
+      shop,
+      shopId: null,
+      errors: [
+        error instanceof Error
+          ? error.message
+          : "Unknown Shopify Admin shop identity failure.",
+      ],
+    });
+  }
 
   return getPartnerBillingCheck({
     shop,
-    shopId: identity.id,
+    shopId,
   });
 }
 
@@ -431,6 +450,7 @@ export async function getPartnerBillingCheck({
 
   return {
     active: subscription !== null,
+    verified: true,
     shop,
     shopId,
     source: "Partner API activeSubscription",
@@ -449,13 +469,44 @@ export async function updateStoreBillingStatus({
   shop: string;
   billingCheck: PartnerBillingCheck;
 }) {
-  const billingStatus = hasActiveBillingSubscription(billingCheck)
+  const current = await db.store.findUnique({
+    where: { shop },
+    select: {
+      billingStatus: true,
+      billingEndedAt: true,
+    },
+  });
+
+  if (billingCheck.verified === false) {
+    return current?.billingStatus ?? BillingStatus.NOT_STARTED;
+  }
+
+  const active = hasActiveBillingSubscription(billingCheck);
+  const billingStatus = active
     ? BillingStatus.ACTIVE
-    : BillingStatus.NOT_STARTED;
+    : current?.billingStatus === BillingStatus.ACTIVE ||
+        current?.billingStatus === BillingStatus.CANCELED
+      ? BillingStatus.CANCELED
+      : BillingStatus.NOT_STARTED;
+  const checkedAt = new Date();
 
   await db.store.updateMany({
     where: { shop },
-    data: { billingStatus },
+    data: active
+      ? {
+          billingStatus,
+          billingPlan: getActiveBillingName(billingCheck),
+          billingCheckedAt: checkedAt,
+          billingEndedAt: null,
+        }
+      : {
+          billingStatus,
+          billingCheckedAt: checkedAt,
+          billingEndedAt:
+            billingStatus === BillingStatus.CANCELED
+              ? (current?.billingEndedAt ?? checkedAt)
+              : null,
+        },
   });
 
   return billingStatus;
@@ -490,6 +541,7 @@ function inactivePartnerBillingCheck({
 }): PartnerBillingCheck {
   return {
     active: false,
+    verified: false,
     shop,
     shopId,
     source: "Partner API activeSubscription",

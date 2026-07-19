@@ -10,11 +10,13 @@ export type CsvParseResult = {
 export function parseCsv(input: string): CsvParseResult {
   const text = input.replace(/^\uFEFF/, "");
   const delimiter = detectDelimiter(text);
-  const rows: string[][] = [];
+  const rows: Array<{ values: string[]; sourceRowNumber: number }> = [];
   const errors: string[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
+  let lineNumber = 1;
+  let rowStartLine = 1;
 
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
@@ -28,6 +30,9 @@ export function parseCsv(input: string): CsvParseResult {
         inQuotes = false;
       } else {
         field += char;
+        if (char === "\n") {
+          lineNumber += 1;
+        }
       }
       continue;
     }
@@ -39,9 +44,11 @@ export function parseCsv(input: string): CsvParseResult {
       field = "";
     } else if (char === "\n") {
       row.push(field);
-      rows.push(row);
+      rows.push({ values: row, sourceRowNumber: rowStartLine });
       row = [];
       field = "";
+      lineNumber += 1;
+      rowStartLine = lineNumber;
     } else if (char !== "\r") {
       field += char;
     }
@@ -51,21 +58,22 @@ export function parseCsv(input: string): CsvParseResult {
     errors.push("CSV ended before a quoted field was closed.");
   }
 
-  if (field.length > 0 || row.length > 0 || text.endsWith(",")) {
+  if (field.length > 0 || row.length > 0 || text.endsWith(delimiter)) {
     row.push(field);
-    rows.push(row);
+    rows.push({ values: row, sourceRowNumber: rowStartLine });
   }
 
   const nonEmptyRows = rows.filter((candidate) =>
-    candidate.some((value) => value.trim().length > 0),
+    candidate.values.some((value) => value.trim().length > 0),
   );
 
-  const [headers = [], ...bodyRows] = nonEmptyRows;
+  const [headerRow, ...bodyRows] = nonEmptyRows;
+  const headers = headerRow?.values ?? [];
 
   return {
     headers: headers.map((header) => header.trim()),
-    rows: bodyRows.map((values, index) => ({
-      sourceRowNumber: index + 2,
+    rows: bodyRows.map(({ values, sourceRowNumber }) => ({
+      sourceRowNumber,
       values,
     })),
     errors,

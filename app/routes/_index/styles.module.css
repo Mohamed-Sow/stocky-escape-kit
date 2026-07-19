@@ -1,49 +1,210 @@
 .index {
+  background: #f6f6f2;
+  color: #202223;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  min-height: 100vh;
+}
+
+.hero,
+.content,
+.truthPanel,
+.footer {
+  margin: 0 auto;
+  max-width: 1120px;
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.hero {
+  padding-bottom: 72px;
+}
+
+.nav {
   align-items: center;
+  border-bottom: 1px solid #d8d8d2;
   display: flex;
-  justify-content: center;
-  height: 100%;
-  width: 100%;
-  text-align: center;
-  padding: 1rem;
+  justify-content: space-between;
+  padding-bottom: 20px;
+  padding-top: 20px;
 }
 
-.heading,
-.text {
-  padding: 0;
+.nav span {
+  display: flex;
+  gap: 20px;
+}
+
+.nav a,
+.truthPanel a {
+  color: #1d5c39;
+  font-weight: 650;
+}
+
+.heroGrid {
+  align-items: start;
+  display: grid;
+  gap: 64px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.8fr);
+  padding-top: 72px;
+}
+
+.eyebrow {
+  color: #4f6f5b;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  margin: 0 0 12px;
+  text-transform: uppercase;
+}
+
+.heading {
+  font-size: clamp(42px, 6vw, 72px);
+  letter-spacing: -0.055em;
+  line-height: 0.98;
   margin: 0;
+  max-width: 820px;
 }
 
-.text {
-  font-size: 1.2rem;
-  padding-bottom: 2rem;
+.lede {
+  color: #4d4f4e;
+  font-size: 20px;
+  line-height: 1.55;
+  margin: 28px 0;
+  max-width: 720px;
+}
+
+.primaryLink {
+  background: #263d2f;
+  border-radius: 8px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 700;
+  padding: 12px 18px;
+  text-decoration: none;
+}
+
+.primaryLink:focus-visible,
+.nav a:focus-visible,
+.truthPanel a:focus-visible {
+  outline: 3px solid #005bd3;
+  outline-offset: 3px;
+}
+
+.signInNote {
+  color: #696b69;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 14px 0 0;
+  max-width: 540px;
+}
+
+.deadlineCard {
+  background: #fff;
+  border: 1px solid #d8d8d2;
+  border-radius: 14px;
+  box-shadow: 0 16px 45px rgb(40 50 43 / 7%);
+  padding: 26px;
+}
+
+.deadlineCard ol {
+  display: grid;
+  gap: 16px;
+  line-height: 1.45;
+  margin: 0;
+  padding-left: 20px;
 }
 
 .content {
-  display: grid;
-  gap: 2rem;
+  background: #fff;
+  max-width: none;
+  padding-bottom: 72px;
+  padding-top: 72px;
 }
 
-.list {
-  list-style: none;
-  padding: 0;
-  padding-top: 3rem;
+.content > p,
+.content > h2,
+.outcomes {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1064px;
+}
+
+.content h2,
+.truthPanel h2 {
+  font-size: 32px;
+  letter-spacing: -0.03em;
   margin: 0;
+}
+
+.outcomes {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 34px;
+}
+
+.outcomes article {
+  border-top: 3px solid #7d9987;
+  padding-top: 18px;
+}
+
+.outcomes h3 {
+  font-size: 18px;
+  margin: 0 0 9px;
+}
+
+.outcomes p,
+.truthPanel > p {
+  color: #5d605e;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.truthPanel {
+  align-items: start;
+  display: grid;
+  gap: 48px;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  padding-bottom: 68px;
+  padding-top: 68px;
+}
+
+.footer {
+  border-top: 1px solid #d8d8d2;
+  color: #686b68;
   display: flex;
-  gap: 2rem;
+  font-size: 13px;
+  gap: 24px;
+  justify-content: space-between;
+  padding-bottom: 28px;
+  padding-top: 24px;
 }
 
-.list > li {
-  max-width: 20rem;
-  text-align: left;
-}
-
-@media only screen and (max-width: 50rem) {
-  .list {
-    display: block;
+@media (max-width: 760px) {
+  .heroGrid,
+  .outcomes,
+  .truthPanel {
+    grid-template-columns: 1fr;
   }
 
-  .list > li {
-    padding-bottom: 1rem;
+  .heroGrid {
+    gap: 36px;
+    padding-top: 48px;
+  }
+
+  .heading {
+    font-size: 44px;
+  }
+
+  .footer {
+    flex-direction: column;
+  }
+
+  .nav span {
+    gap: 12px;
   }
 }

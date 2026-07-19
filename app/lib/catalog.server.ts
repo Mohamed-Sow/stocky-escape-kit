@@ -72,20 +72,6 @@ type ProductVariantsResponse = {
               amount: string;
               currencyCode: string;
             } | null;
-            inventoryLevels: {
-              edges: Array<{
-                node: {
-                  location: {
-                    id: string;
-                    name: string;
-                  };
-                  quantities: Array<{
-                    name: string;
-                    quantity: number;
-                  }>;
-                };
-              }>;
-            };
           } | null;
         };
       }>;
@@ -146,20 +132,6 @@ const PRODUCT_VARIANTS_QUERY = `#graphql
               amount
               currencyCode
             }
-            inventoryLevels(first: 100) {
-              edges {
-                node {
-                  location {
-                    id
-                    name
-                  }
-                  quantities(names: ["available", "on_hand", "incoming", "committed"]) {
-                    name
-                    quantity
-                  }
-                }
-              }
-            }
           }
         }
       }
@@ -199,7 +171,7 @@ export async function syncShopifyCatalog({
   });
 
   try {
-    const limit = Number(process.env.SHOPIFY_SYNC_VARIANT_LIMIT ?? 5000);
+    const limit = getCatalogVariantLimit();
     const variants = await fetchCatalogVariants({ admin, limit });
     const locations = await fetchLocations(admin);
     const summary = buildCatalogSummary({ variants, locations, limit });
@@ -210,10 +182,6 @@ export async function syncShopifyCatalog({
         .map((variant) => variant.inventoryItemId)
         .filter((id): id is string => Boolean(id)),
     ).size;
-    const inventoryLevelCount = variants.reduce(
-      (sum, variant) => sum + variant.locations.length,
-      0,
-    );
 
     return db.shopifyCatalogSnapshot.update({
       where: { id: snapshot.id },
@@ -222,10 +190,19 @@ export async function syncShopifyCatalog({
         productCount,
         variantCount: variants.length,
         inventoryItemCount,
-        inventoryLevelCount,
+        inventoryLevelCount: 0,
         locationCount: locations.length,
         summary: summary as Prisma.InputJsonObject,
         syncedAt: new Date(),
+      },
+      select: {
+        id: true,
+        syncStatus: true,
+        productCount: true,
+        variantCount: true,
+        inventoryItemCount: true,
+        locationCount: true,
+        errorMessage: true,
       },
     });
   } catch (error) {
@@ -237,6 +214,15 @@ export async function syncShopifyCatalog({
       data: {
         syncStatus: SyncStatus.FAILED,
         errorMessage: message,
+      },
+      select: {
+        id: true,
+        syncStatus: true,
+        productCount: true,
+        variantCount: true,
+        inventoryItemCount: true,
+        locationCount: true,
+        errorMessage: true,
       },
     });
   }
@@ -256,7 +242,16 @@ export function readCatalogSummary(value: Prisma.JsonValue | null) {
   return summary as CatalogSummary;
 }
 
-async function fetchCatalogVariants({
+export class CatalogSyncLimitError extends Error {
+  constructor(limit: number) {
+    super(
+      `This store has more than ${limit.toLocaleString()} Shopify variants, above the app's current verified catalog capacity. No audit was generated from partial data. Contact support before relying on Stocky Escape Kit for this store.`,
+    );
+    this.name = "CatalogSyncLimitError";
+  }
+}
+
+export async function fetchCatalogVariants({
   admin,
   limit,
 }: {
@@ -280,15 +275,23 @@ async function fetchCatalogVariants({
     }
 
     for (const edge of connection.edges) {
-      variants.push(normalizeVariant(edge.node));
-
       if (variants.length >= limit) {
-        break;
+        throw new CatalogSyncLimitError(limit);
       }
+
+      variants.push(normalizeVariant(edge.node));
     }
 
     cursor = connection.pageInfo.endCursor;
     hasNextPage = connection.pageInfo.hasNextPage;
+
+    if (hasNextPage && variants.length >= limit) {
+      throw new CatalogSyncLimitError(limit);
+    }
+
+    if (hasNextPage && !cursor) {
+      throw new Error("Shopify productVariants pagination returned no cursor.");
+    }
   }
 
   return variants;
@@ -316,6 +319,10 @@ async function fetchLocations(admin: GraphqlClient) {
     locations.push(...connection.edges.map((edge): LocationNode => edge.node));
     cursor = connection.pageInfo.endCursor;
     hasNextPage = connection.pageInfo.hasNextPage;
+
+    if (hasNextPage && !cursor) {
+      throw new Error("Shopify locations pagination returned no cursor.");
+    }
   }
 
   return locations;
@@ -335,6 +342,10 @@ async function requestGraphql<
 ) {
   const response = await admin.graphql(query, { variables });
   const payload = (await response.json()) as T;
+
+  if (!response.ok) {
+    throw new Error(`Shopify GraphQL returned HTTP ${response.status}.`);
+  }
 
   if (payload.errors?.length) {
     throw new Error(payload.errors.map((error) => error.message).join("; "));
@@ -357,17 +368,7 @@ function normalizeVariant(node: ProductVariantNode): CatalogVariant {
     inventoryItemId: inventoryItem?.id ?? null,
     inventorySku: clean(inventoryItem?.sku ?? null),
     unitCost: inventoryItem?.unitCost ?? null,
-    locations:
-      inventoryItem?.inventoryLevels.edges.map((edge) => ({
-        id: edge.node.location.id,
-        name: edge.node.location.name,
-        quantities: Object.fromEntries(
-          edge.node.quantities.map((quantity) => [
-            quantity.name,
-            quantity.quantity,
-          ]),
-        ),
-      })) ?? [],
+    locations: [],
   };
 }
 
@@ -401,12 +402,22 @@ function buildCatalogSummary({
 
   return {
     generatedAt: new Date().toISOString(),
-    truncated: variants.length >= limit,
+    truncated: false,
     limit,
     variants,
     duplicateSkus,
     locations,
   };
+}
+
+export function getCatalogVariantLimit() {
+  const limit = Number(process.env.SHOPIFY_SYNC_VARIANT_LIMIT ?? 5_000);
+
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error("SHOPIFY_SYNC_VARIANT_LIMIT must be a positive integer.");
+  }
+
+  return limit;
 }
 
 function clean(value: string | null) {

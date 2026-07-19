@@ -1,4 +1,35 @@
+import type { Prisma } from "@prisma/client";
 import db from "../db.server";
+
+export const uploadBatchOverviewInclude = {
+  uploadedFiles: {
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      originalFilename: true,
+      detectedReportType: true,
+      parseStatus: true,
+      storagePointer: true,
+      rawContentByteLength: true,
+      rowCount: true,
+      warningCount: true,
+      errorMessage: true,
+    },
+  },
+  auditSnapshot: {
+    select: {
+      id: true,
+      syncStatus: true,
+      productCount: true,
+      variantCount: true,
+      inventoryItemCount: true,
+      inventoryLevelCount: true,
+      locationCount: true,
+      errorMessage: true,
+      syncedAt: true,
+    },
+  },
+} satisfies Prisma.UploadBatchInclude;
 
 export async function getOwnedUploadBatch({
   storeId,
@@ -13,9 +44,7 @@ export async function getOwnedUploadBatch({
 
   return db.uploadBatch.findFirst({
     where: { id: batchId, storeId },
-    include: {
-      uploadedFiles: { orderBy: { createdAt: "asc" } },
-    },
+    include: uploadBatchOverviewInclude,
   });
 }
 

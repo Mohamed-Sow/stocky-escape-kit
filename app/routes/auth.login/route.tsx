@@ -1,48 +1,41 @@
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
-import { useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData } from "react-router";
+import type { LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 
 import { login } from "../../shopify.server";
 import { loginErrorMessage } from "./error.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const errors = loginErrorMessage(await login(request));
+  const url = new URL(request.url);
+  const errors = url.searchParams.get("shop")
+    ? loginErrorMessage(await login(request))
+    : {};
 
   return { errors };
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const errors = loginErrorMessage(await login(request));
-
-  return {
-    errors,
-  };
-};
-
 export default function Auth() {
-  const loaderData = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const [shop, setShop] = useState("");
-  const { errors } = actionData || loaderData;
+  const { errors } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider embedded={false}>
       <s-page>
-        <Form method="post">
-          <s-section heading="Log in">
-            <s-text-field
-              name="shop"
-              label="Shop domain"
-              details="your-store.myshopify.com"
-              value={shop}
-              onChange={(e) => setShop(e.currentTarget.value)}
-              autocomplete="on"
-              error={errors.shop}
-            ></s-text-field>
-            <s-button type="submit">Log in</s-button>
-          </s-section>
-        </Form>
+        <s-section heading="Open Stocky Escape Kit from Shopify">
+          <p>
+            For security, installs and sign-ins start from a Shopify-owned
+            surface. Open Shopify admin, then choose Stocky Escape Kit from
+            Apps. This page never asks you to type a store domain.
+          </p>
+          {errors.shop ? <p role="alert">{errors.shop}</p> : null}
+          <p>
+            <a href="https://admin.shopify.com/" target="_top">
+              Open Shopify admin
+            </a>
+          </p>
+          <p>
+            <a href="/support">Support</a> · <a href="/privacy">Privacy</a>
+          </p>
+        </s-section>
       </s-page>
     </AppProvider>
   );

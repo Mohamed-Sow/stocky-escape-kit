@@ -7,6 +7,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import db from "../db.server";
 import { readCatalogSummary, type CatalogVariant } from "./catalog.server";
+import { reportRequiresSku } from "./stocky-parser.server";
 
 type NormalizedPayload = {
   sourceFilename?: string;
@@ -43,35 +44,40 @@ type PendingFinding = {
 export async function regenerateAuditFindings({
   storeId,
   batchId,
+  snapshotId,
+  includeLocationMismatches = true,
 }: {
   storeId: string;
   batchId: string;
+  snapshotId?: string | null;
+  includeLocationMismatches?: boolean;
 }) {
-  await db.auditFinding.deleteMany({
-    where: {
-      storeId,
-      batchId,
-    },
-  });
-
+  const snapshotPromise =
+    snapshotId === null
+      ? Promise.resolve(null)
+      : db.shopifyCatalogSnapshot.findFirst({
+          where: snapshotId
+            ? { id: snapshotId, storeId, syncStatus: SyncStatus.SUCCEEDED }
+            : { storeId, syncStatus: SyncStatus.SUCCEEDED },
+          orderBy: { syncedAt: "desc" },
+        });
   const [batch, snapshot] = await Promise.all([
-    db.uploadBatch.findUnique({
-      where: { id: batchId },
-      include: {
+    db.uploadBatch.findFirst({
+      where: { id: batchId, storeId },
+      select: {
+        id: true,
         uploadedFiles: {
-          include: {
-            parsedRecords: true,
+          select: {
+            id: true,
+            originalFilename: true,
+            detectedReportType: true,
+            parseStatus: true,
+            errorMessage: true,
           },
         },
       },
     }),
-    db.shopifyCatalogSnapshot.findFirst({
-      where: {
-        storeId,
-        syncStatus: SyncStatus.SUCCEEDED,
-      },
-      orderBy: { syncedAt: "desc" },
-    }),
+    snapshotPromise,
   ]);
 
   if (!batch) {
@@ -94,9 +100,23 @@ export async function regenerateAuditFindings({
     (catalog?.locations ?? []).map((location) => location.name.toLowerCase()),
   );
   const pending = new Map<string, PendingFinding>();
-  const stockySkuCounts = new Map<string, number>();
 
   for (const file of batch.uploadedFiles) {
+    const missingSkuRows: number[] = [];
+    const productSkuCounts = new Map<
+      string,
+      { displaySku: string; count: number }
+    >();
+    const openPurchaseOrders = new Map<
+      string,
+      {
+        reference: string | null;
+        statuses: Set<string>;
+        sourceRowNumbers: number[];
+        skus: Set<string>;
+      }
+    >();
+
     if (file.parseStatus === "FAILED") {
       addFinding(pending, {
         severity: FindingSeverity.CRITICAL,
@@ -113,52 +133,95 @@ export async function regenerateAuditFindings({
       });
     }
 
-    const unknownColumns = readUnknownColumns(
-      file.parsedRecords[0]?.normalizedPayload,
-    );
+    let recordedUnknownColumns = false;
 
-    if (unknownColumns.length > 0) {
-      addFinding(pending, {
-        severity: FindingSeverity.INFO,
-        category: FindingCategory.PARSE_ERROR,
-        sku: null,
-        title: "CSV contains unrecognized columns",
-        message: `${file.originalFilename}: ${unknownColumns.join(", ")}`,
-        recommendedAction:
-          "Download the preserved raw CSV if you need the original evidence. Unrecognized columns are preserved in parsed row payloads but are not used for matching.",
-        source: {
-          fileId: file.id,
-          filename: file.originalFilename,
-          unknownColumns,
-        },
-      });
-    }
+    for await (const record of iterateParsedRecords(file.id)) {
+      if (!recordedUnknownColumns) {
+        const unknownColumns = readUnknownColumns(record.normalizedPayload);
 
-    for (const record of file.parsedRecords) {
+        if (unknownColumns.length > 0) {
+          addFinding(pending, {
+            severity: FindingSeverity.INFO,
+            category: FindingCategory.PARSE_ERROR,
+            sku: null,
+            title: "CSV contains unrecognized columns",
+            message: `${file.originalFilename}: ${unknownColumns.join(", ")}`,
+            recommendedAction:
+              "Download the preserved raw CSV if you need the original evidence. Unrecognized columns are preserved in parsed row payloads but are not used for matching.",
+            source: {
+              fileId: file.id,
+              filename: file.originalFilename,
+              unknownColumns,
+            },
+          });
+        }
+
+        recordedUnknownColumns = true;
+      }
+
       const payload = readPayload(record.normalizedPayload);
       const normalized = payload.normalized ?? {};
       const sku = record.sku?.trim() || normalized.sku?.trim() || null;
 
-      if (sku) {
+      if (sku && file.detectedReportType === StockyReportType.PRODUCTS) {
         const key = sku.toLowerCase();
-        stockySkuCounts.set(key, (stockySkuCounts.get(key) ?? 0) + 1);
+        const current = productSkuCounts.get(key);
+        productSkuCounts.set(key, {
+          displaySku: current?.displaySku ?? sku,
+          count: (current?.count ?? 0) + 1,
+        });
       }
 
-      if (!sku) {
+      if (normalized.supplier || normalized.vendor) {
+        const supplier = normalized.supplier?.trim() || null;
+        const vendor = normalized.vendor?.trim() || null;
+        const evidence = supplier ?? vendor ?? "Unknown";
+
         addFinding(pending, {
-          severity: FindingSeverity.CRITICAL,
-          category: FindingCategory.MISSING_SKU,
-          sku: null,
-          title: "Stocky row has no SKU",
-          message: `${file.originalFilename} row ${record.sourceRowNumber} cannot be matched to Shopify without a SKU.`,
-          recommendedAction:
-            "Add or recover the SKU in the source export before relying on this row for migration decisions.",
+          severity: FindingSeverity.INFO,
+          category: FindingCategory.SUPPLIER_RECONSTRUCTION_CANDIDATE,
+          sku,
+          title: supplier
+            ? "Supplier evidence preserved from Stocky"
+            : "Vendor evidence may help identify a supplier",
+          message: sku
+            ? `${sku} has ${supplier ? "supplier" : "vendor-only"} evidence from ${evidence}.`
+            : `${evidence} appears in ${file.originalFilename} as ${supplier ? "supplier" : "vendor-only"} evidence without a product SKU.`,
+          recommendedAction: supplier
+            ? "Use purchase-order and custom SKU report evidence to rebuild supplier records manually. Stocky supplier records cannot be exported directly."
+            : "Treat this vendor value as a lead, not proof of the supplier. Confirm it against purchase orders or custom SKU reports before recreating supplier records.",
           source: sourceFor(
             file.originalFilename,
             record.sourceRowNumber,
             payload,
           ),
         });
+      }
+
+      if (
+        file.detectedReportType === StockyReportType.PURCHASE_ORDERS &&
+        isOpenPurchaseOrderStatus(normalized.status)
+      ) {
+        const reference = normalized.reference?.trim() || null;
+        const key = reference?.toLowerCase() ?? `row:${record.sourceRowNumber}`;
+        const purchaseOrder = openPurchaseOrders.get(key) ?? {
+          reference,
+          statuses: new Set<string>(),
+          sourceRowNumbers: [],
+          skus: new Set<string>(),
+        };
+
+        purchaseOrder.statuses.add(normalized.status?.trim() || "unknown");
+        purchaseOrder.sourceRowNumbers.push(record.sourceRowNumber);
+        if (sku) purchaseOrder.skus.add(sku);
+        openPurchaseOrders.set(key, purchaseOrder);
+      }
+
+      if (!sku) {
+        if (reportRequiresSku(file.detectedReportType)) {
+          missingSkuRows.push(record.sourceRowNumber);
+        }
+
         continue;
       }
 
@@ -255,6 +318,7 @@ export async function regenerateAuditFindings({
       }
 
       if (
+        includeLocationMismatches &&
         catalog &&
         normalized.location &&
         !locationNames.has(normalized.location.toLowerCase())
@@ -274,87 +338,156 @@ export async function regenerateAuditFindings({
           ),
         });
       }
-
-      if (
-        file.detectedReportType === StockyReportType.PURCHASE_ORDERS &&
-        isOpenPurchaseOrderStatus(normalized.status)
-      ) {
-        addFinding(pending, {
-          severity: FindingSeverity.INFO,
-          category: FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
-          sku,
-          title: "Stocky row may represent open purchasing work",
-          message: `${sku} has Stocky purchase order status ${normalized.status ?? "unknown"}.`,
-          recommendedAction:
-            "Review this purchase order manually. Historical Stocky purchase orders cannot be imported into Shopify.",
-          source: sourceFor(
-            file.originalFilename,
-            record.sourceRowNumber,
-            payload,
-          ),
-        });
-      }
-
-      if (normalized.supplier || normalized.vendor) {
-        addFinding(pending, {
-          severity: FindingSeverity.INFO,
-          category: FindingCategory.SUPPLIER_RECONSTRUCTION_CANDIDATE,
-          sku,
-          title: "Supplier hint available from Stocky export",
-          message: `${sku} has supplier evidence from ${normalized.supplier ?? normalized.vendor}.`,
-          recommendedAction:
-            "Use this row as evidence when reconstructing supplier records outside Shopify.",
-          source: sourceFor(
-            file.originalFilename,
-            record.sourceRowNumber,
-            payload,
-          ),
-        });
-      }
-    }
-  }
-
-  for (const [sku, count] of stockySkuCounts.entries()) {
-    if (count <= 1) {
-      continue;
     }
 
-    addFinding(pending, {
-      severity: FindingSeverity.WARNING,
-      category: FindingCategory.DUPLICATE_SKU,
-      sku,
-      title: "Stocky exports contain duplicate SKU rows",
-      message: `${sku} appears ${count} times in the uploaded Stocky batch.`,
-      recommendedAction:
-        "Confirm whether these rows represent distinct locations, variants, or duplicate export rows.",
-      source: {
-        stockyRowCount: count,
-      },
-    });
+    if (missingSkuRows.length > 0) {
+      const sample = missingSkuRows.slice(0, 8).join(", ");
+      const remainder =
+        missingSkuRows.length - Math.min(8, missingSkuRows.length);
+
+      addFinding(pending, {
+        severity: FindingSeverity.CRITICAL,
+        category: FindingCategory.MISSING_SKU,
+        sku: null,
+        title: "Source file contains rows without SKUs",
+        message: `${file.originalFilename} has ${missingSkuRows.length} row${missingSkuRows.length === 1 ? "" : "s"} that cannot be matched to Shopify without a SKU (row${missingSkuRows.length === 1 ? "" : "s"} ${sample}${remainder > 0 ? `, plus ${remainder} more` : ""}).`,
+        recommendedAction:
+          "Recover the missing SKUs or preserve these rows for manual review before relying on SKU-level migration results.",
+        source: {
+          fileId: file.id,
+          filename: file.originalFilename,
+          sourceRowNumbers: missingSkuRows,
+        },
+      });
+    }
+
+    for (const { displaySku, count } of productSkuCounts.values()) {
+      if (count <= 1) {
+        continue;
+      }
+
+      addFinding(pending, {
+        severity: FindingSeverity.WARNING,
+        category: FindingCategory.DUPLICATE_SKU,
+        sku: displaySku,
+        title: "Product export contains duplicate SKU rows",
+        message: `${displaySku} appears ${count} times in ${file.originalFilename}.`,
+        recommendedAction:
+          "Confirm whether these are distinct variants or duplicate product-export rows before using SKU-level results.",
+        source: {
+          fileId: file.id,
+          filename: file.originalFilename,
+          stockyRowCount: count,
+        },
+      });
+    }
+
+    for (const purchaseOrder of openPurchaseOrders.values()) {
+      const reference =
+        purchaseOrder.reference ??
+        `${file.originalFilename} row ${purchaseOrder.sourceRowNumbers[0]}`;
+      const statuses = [...purchaseOrder.statuses].join(", ");
+      const skuCount = purchaseOrder.skus.size;
+
+      addFinding(pending, {
+        severity: FindingSeverity.INFO,
+        category: FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
+        sku: null,
+        title: "Stocky purchase order may still need action",
+        message: `${reference} has ${purchaseOrder.sourceRowNumbers.length} preserved row${purchaseOrder.sourceRowNumbers.length === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.`,
+        recommendedAction:
+          "Review this purchase order manually. Historical Stocky purchase orders cannot be imported into Shopify.",
+        source: {
+          fileId: file.id,
+          filename: file.originalFilename,
+          reference: purchaseOrder.reference,
+          sourceRowNumbers: purchaseOrder.sourceRowNumbers,
+          skus: [...purchaseOrder.skus],
+        },
+      });
+    }
   }
 
   const findings = [...pending.values()];
 
-  if (findings.length === 0) {
-    return { created: 0 };
-  }
+  await db.$transaction(async (transaction) => {
+    await transaction.auditFinding.deleteMany({
+      where: { storeId, batchId },
+    });
 
-  await db.auditFinding.createMany({
-    data: findings.map((finding) => ({
-      storeId,
-      batchId,
-      severity: finding.severity,
-      category: finding.category,
-      sku: finding.sku,
-      title: finding.title,
-      message: finding.message,
-      recommendedAction: finding.recommendedAction,
-      source: finding.source,
-    })),
+    if (findings.length > 0) {
+      await transaction.auditFinding.createMany({
+        data: findings.map((finding) => ({
+          storeId,
+          batchId,
+          severity: finding.severity,
+          category: finding.category,
+          sku: finding.sku,
+          title: finding.title,
+          message: finding.message,
+          recommendedAction: finding.recommendedAction,
+          source: finding.source,
+        })),
+      });
+    }
+
+    await transaction.uploadBatch.update({
+      where: { id: batchId },
+      data: {
+        auditSnapshotId: snapshot?.id ?? null,
+        auditedAt: new Date(),
+      },
+    });
   });
 
   return { created: findings.length };
 }
+
+type ParsedRecordAuditPage = {
+  id: string;
+  sku: string | null;
+  sourceRowNumber: number;
+  normalizedPayload: Prisma.JsonValue;
+};
+
+async function* iterateParsedRecords(
+  uploadedFileId: string,
+): AsyncGenerator<ParsedRecordAuditPage> {
+  const pageSize = 500;
+  let cursor: string | null = null;
+
+  while (true) {
+    const records: ParsedRecordAuditPage[] = await db.parsedRecord.findMany({
+      where: { uploadedFileId },
+      orderBy: [{ sourceRowNumber: "asc" }, { id: "asc" }],
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        sku: true,
+        sourceRowNumber: true,
+        normalizedPayload: true,
+      },
+    });
+
+    for (const record of records) {
+      yield record;
+    }
+
+    if (records.length < pageSize) {
+      return;
+    }
+
+    cursor = records[records.length - 1].id;
+  }
+}
+
+/*
+ * Findings are deliberately aggregated before persistence. Historical Stocky
+ * reports naturally repeat SKUs across purchase orders, stocktakes, and
+ * activity rows; treating those repetitions as duplicate products creates
+ * false urgency for merchants.
+ */
 
 function addFinding(
   findings: Map<string, PendingFinding>,
@@ -410,7 +543,12 @@ function isOpenPurchaseOrderStatus(status: string | null | undefined) {
 
   const value = status.toLowerCase();
 
-  return ["open", "pending", "partial", "ordered", "unreceived"].some(
-    (openStatus) => value.includes(openStatus),
-  );
+  return [
+    "open",
+    "pending",
+    "partial",
+    "ordered",
+    "unreceived",
+    "not received",
+  ].some((openStatus) => value.includes(openStatus));
 }

@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import type { LoaderFunctionArgs } from "react-router";
 import db from "../db.server";
+import { attachmentContentDisposition } from "../lib/filenames.server";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -38,15 +39,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${safeFilename(uploadedFile.originalFilename)}"`,
+        "Content-Disposition": attachmentContentDisposition(
+          uploadedFile.originalFilename,
+        ),
         ...(uploadedFile.contentSha256
           ? { "X-Content-Sha256": uploadedFile.contentSha256 }
           : {}),
+        "Cache-Control": "no-store",
       },
     },
   );
 };
-
-function safeFilename(filename: string) {
-  return filename.replace(/["\r\n]/g, "_") || "stocky-export.csv";
-}

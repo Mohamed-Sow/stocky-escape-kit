@@ -168,7 +168,7 @@ export function parseStockyCsv({
     const normalized = extractNormalizedFields(raw, headerColumns);
     const warnings: string[] = [];
 
-    if (!normalized.sku) {
+    if (reportRequiresSku(reportType) && !normalized.sku) {
       warnings.push("missing_sku");
     }
 
@@ -207,6 +207,13 @@ export function parseStockyCsv({
     parseErrors: csv.errors,
     records,
   };
+}
+
+export function reportRequiresSku(reportType: StockyReportType) {
+  return (
+    reportType !== StockyReportType.VENDORS &&
+    reportType !== StockyReportType.UNKNOWN
+  );
 }
 
 export function normalizeHeader(header: string) {
