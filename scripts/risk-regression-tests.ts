@@ -128,6 +128,22 @@ test("finding result pages remain bounded and reachable", () => {
   assert.equal(resolveFindingsPage("invalid", 250).page, 1);
 });
 
+test("catalog sync busy state is scoped to its own submission", () => {
+  const dashboardRoute = readFileSync(
+    path.join(process.cwd(), "app", "routes", "app._index.tsx"),
+    "utf8",
+  );
+
+  assert.match(
+    dashboardRoute,
+    /navigation\.formData\?\.get\("intent"\) === "sync_catalog"/,
+  );
+  assert.match(
+    dashboardRoute,
+    /navigation\.formData\?\.get\("batchId"\) === batchId/,
+  );
+});
+
 test("source coverage requires every core successfully parsed Stocky report", () => {
   const partial = resolveStockySourceCoverage([
     { reportType: "PRODUCTS", status: "PARSED" },

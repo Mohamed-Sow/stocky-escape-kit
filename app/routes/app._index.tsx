@@ -1163,7 +1163,10 @@ function CatalogSync({
   disabled: boolean;
 }) {
   const navigation = useNavigation();
-  const busy = navigation.state !== "idle";
+  const isSyncing =
+    navigation.state !== "idle" &&
+    navigation.formData?.get("intent") === "sync_catalog" &&
+    navigation.formData?.get("batchId") === batchId;
   return (
     <Form method="post">
       <input type="hidden" name="intent" value="sync_catalog" />
@@ -1171,10 +1174,10 @@ function CatalogSync({
       <button
         className={styles.secondaryButton}
         type="submit"
-        disabled={busy || disabled}
+        disabled={isSyncing || disabled}
         title={disabled ? "Reactivate the subscription to sync." : undefined}
       >
-        {busy ? "Syncing…" : "Sync Shopify and audit"}
+        {isSyncing ? "Syncing…" : "Sync Shopify and audit"}
       </button>
     </Form>
   );
