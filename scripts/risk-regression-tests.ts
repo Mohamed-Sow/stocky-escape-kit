@@ -160,6 +160,8 @@ test("merchant-facing workflow labels stay truthful and task-oriented", () => {
   assert.match(dashboardRoute, /Download the complete migration package/);
   assert.doesNotMatch(dashboardRoute, /Download the complete review kit/);
   assert.match(dashboardRoute, /Before August 31, 2026/);
+  assert.match(dashboardRoute, /role="note"/);
+  assert.match(dashboardRoute, /aria-label={`Selected run coverage:/);
   assert.doesNotMatch(dashboardRoute, /rows imported/);
   assert.doesNotMatch(auditGenerator, /app reviewer/i);
   assert.doesNotMatch(auditGenerator, /before importing/i);

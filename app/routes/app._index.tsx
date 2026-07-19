@@ -837,6 +837,22 @@ function Files({ data, selectedBatchId }: ViewProps) {
   const sourceCoverage = resolveStockySourceCoverage(
     data.selectedBatch?.files ?? [],
   );
+  const sourceCoverageDescription = data.selectedBatch
+    ? [
+        `${sourceCoverage.covered.length} of ${sourceCoverage.total} core reports.`,
+        sourceCoverage.coreTypesRepresented
+          ? "Completed purchase orders, stocktakes, and historical costs are represented."
+          : `Still needed in one complete run: ${sourceCoverage.missing.map(stockyReportTypeLabel).join(", ")}.`,
+        sourceCoverage.supplementalCovered.length > 0
+          ? `Supplemental evidence included: ${sourceCoverage.supplementalCovered.map(stockyReportTypeLabel).join(", ")}.`
+          : "",
+        sourceCoverage.coreTypesRepresented
+          ? "Report presence does not prove that every date range or record was exported."
+          : "A header-only CSV still counts when Stocky returns no rows; a blank file does not.",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : null;
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
@@ -871,20 +887,14 @@ function Files({ data, selectedBatchId }: ViewProps) {
           catalogs stop before findings are generated so partial results cannot
           look complete; contact support before relying on this app for one.
         </p>
-        {data.selectedBatch ? (
-          <p className={styles.inlineNotice}>
+        {sourceCoverageDescription ? (
+          <p
+            aria-label={`Selected run coverage: ${sourceCoverageDescription}`}
+            className={styles.inlineNotice}
+            role="note"
+          >
             <strong>Selected run coverage:</strong>{" "}
-            {sourceCoverage.covered.length} of {sourceCoverage.total} core
-            reports.
-            {sourceCoverage.coreTypesRepresented
-              ? " Completed purchase orders, stocktakes, and historical costs are represented."
-              : ` Still needed in one complete run: ${sourceCoverage.missing.map(stockyReportTypeLabel).join(", ")}.`}
-            {sourceCoverage.supplementalCovered.length > 0
-              ? ` Supplemental evidence included: ${sourceCoverage.supplementalCovered.map(stockyReportTypeLabel).join(", ")}.`
-              : ""}
-            {!sourceCoverage.coreTypesRepresented
-              ? " A header-only CSV still counts when Stocky returns no rows; a blank file does not."
-              : " Report presence does not prove that every date range or record was exported."}
+            {sourceCoverageDescription}
           </p>
         ) : null}
       </section>
