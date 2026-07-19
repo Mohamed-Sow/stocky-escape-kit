@@ -1147,7 +1147,7 @@ function FileStager({ data }: { data: LoaderData }) {
           {formatBytes(data.entitlements.maxBatchBytes)} this run ·{" "}
           {data.entitlements.maxRowsPerBatch.toLocaleString()} parsed rows max ·{" "}
           {formatBytes(data.storage.usedBytes)}/
-          {formatBytes(data.storage.maxBytes)} stored
+          {formatBytes(data.storage.maxBytes)} source CSV storage
         </span>
       </div>
       {fetcher.data ? <StatusBanner data={fetcher.data} /> : null}
