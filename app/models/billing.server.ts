@@ -138,7 +138,7 @@ export const BILLING_PLAN_DETAILS = [
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.basic,
     price: "$99/mo",
     summary:
-      "All migration reports and the review kit; up to 10 files, 10 MB, and 40,000 parsed rows per run.",
+      "All migration reports and the migration package; up to 10 files, 10 MB, and 40,000 parsed rows per run.",
   },
   {
     id: "pro",

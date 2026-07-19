@@ -16,5 +16,5 @@ export function getExportFilename(exportType: ExportType, runCreatedAt: Date) {
 }
 
 export function getReviewKitFilename(runCreatedAt: Date) {
-  return `stocky-review-kit-run-${formatRunFilenameStamp(runCreatedAt)}.zip`;
+  return `stocky-migration-package-run-${formatRunFilenameStamp(runCreatedAt)}.zip`;
 }

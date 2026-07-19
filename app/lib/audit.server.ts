@@ -298,7 +298,7 @@ export async function regenerateAuditFindings({
           title: "Shopify has duplicate variants for this SKU",
           message: `${sku} matched ${shopifyMatches.length} Shopify variants.`,
           recommendedAction:
-            "Resolve duplicate Shopify SKUs before importing or reconciling Stocky history.",
+            "Resolve duplicate Shopify SKUs before relying on Stocky-to-Shopify matching or reconciliation.",
           source: {
             ...sourceFor(
               file.originalFilename,
@@ -319,7 +319,7 @@ export async function regenerateAuditFindings({
             title: "Shopify unit cost is missing",
             message: `${sku} has no readable Shopify unit cost on ${match.displayName}.`,
             recommendedAction:
-              "Add product cost in Shopify or verify the app reviewer has product cost visibility.",
+              "Add the product cost in Shopify, or confirm that the cost is intentionally unavailable before relying on cost comparisons.",
             source: sourceFor(
               file.originalFilename,
               record.sourceRowNumber,

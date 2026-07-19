@@ -6,7 +6,7 @@
 
 **Subtitle:** Preserve Stocky exports and audit migration gaps
 
-**Promotional text:** Back up original Stocky CSV exports, compare them with your live Shopify catalog, find migration risks, and leave with a traceable review kit.
+**Promotional text:** Back up original Stocky CSV exports, compare them with your live Shopify catalog, find migration risks, and leave with a traceable migration package.
 
 **Search terms:** Stocky migration, Stocky backup, CSV archive, SKU audit, supplier records, inventory migration
 

@@ -144,6 +144,27 @@ test("catalog sync busy state is scoped to its own submission", () => {
   );
 });
 
+test("merchant-facing workflow labels stay truthful and task-oriented", () => {
+  const dashboardRoute = readFileSync(
+    path.join(process.cwd(), "app", "routes", "app._index.tsx"),
+    "utf8",
+  );
+  const auditGenerator = readFileSync(
+    path.join(process.cwd(), "app", "lib", "audit.server.ts"),
+    "utf8",
+  );
+
+  assert.match(dashboardRoute, /IMPORTED: "Preserved"/);
+  assert.match(dashboardRoute, /label="Rows parsed"/);
+  assert.doesNotMatch(dashboardRoute, /label="Rows imported"/);
+  assert.match(dashboardRoute, /Download the complete migration package/);
+  assert.doesNotMatch(dashboardRoute, /Download the complete review kit/);
+  assert.match(dashboardRoute, /Before August 31, 2026/);
+  assert.doesNotMatch(dashboardRoute, /rows imported/);
+  assert.doesNotMatch(auditGenerator, /app reviewer/i);
+  assert.doesNotMatch(auditGenerator, /before importing/i);
+});
+
 test("source coverage requires every core successfully parsed Stocky report", () => {
   const partial = resolveStockySourceCoverage([
     { reportType: "PRODUCTS", status: "PARSED" },
@@ -176,7 +197,7 @@ test("export filenames identify the selected migration run", () => {
   );
   assert.equal(
     getReviewKitFilename(createdAt),
-    "stocky-review-kit-run-20260710T153604123Z.zip",
+    "stocky-migration-package-run-20260710T153604123Z.zip",
   );
 });
 

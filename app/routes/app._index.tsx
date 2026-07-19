@@ -113,6 +113,10 @@ const DISPLAY_ACRONYMS = new Set([
   "ui",
 ]);
 
+const STATUS_LABELS: Record<string, string> = {
+  IMPORTED: "Preserved",
+};
+
 const EXPORT_DETAILS: Record<
   ExportType,
   { label: string; description: string }
@@ -470,7 +474,7 @@ export const action = async ({
               ? "partial"
               : "error",
         batchId: result.batchId,
-        message: `Processed ${result.fileCount} files as one run: ${result.importedRowCount} rows imported, ${result.warningCount} warnings, ${result.failedFileCount} failed file${result.failedFileCount === 1 ? "" : "s"}.`,
+        message: `Processed ${result.fileCount} files as one run: ${result.importedRowCount} rows parsed and preserved, ${result.warningCount} warnings, ${result.failedFileCount} failed file${result.failedFileCount === 1 ? "" : "s"}.`,
       };
     } catch (error) {
       if (!(error instanceof UploadLimitError)) {
@@ -675,7 +679,7 @@ function Overview({ data, onViewChange }: ViewProps) {
           detail={batch ? formatDate(batch.createdAt) : "No run yet"}
         />
         <Metric
-          label="Rows imported"
+          label="Rows parsed"
           value={batch?.importedRowCount ?? 0}
           detail={`${batch?.warningCount ?? 0} parser warnings`}
         />
@@ -724,7 +728,7 @@ function Overview({ data, onViewChange }: ViewProps) {
                 <dd>{batch.fileCount}</dd>
               </div>
               <div>
-                <dt>Imported rows</dt>
+                <dt>Parsed rows</dt>
                 <dd>{batch.importedRowCount}</dd>
               </div>
               <div>
@@ -836,7 +840,7 @@ function Files({ data, selectedBatchId }: ViewProps) {
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
-        <p className={styles.eyebrow}>Before Stocky becomes read-only</p>
+        <p className={styles.eyebrow}>Before August 31, 2026</p>
         <h3>Preserve the Stocky history that will not migrate automatically</h3>
         <ul className={styles.guidanceList}>
           <li>Completed purchase order reports</li>
@@ -869,9 +873,9 @@ function Files({ data, selectedBatchId }: ViewProps) {
         </p>
         {data.selectedBatch ? (
           <p className={styles.inlineNotice}>
-            <strong>Selected run core report types:</strong>{" "}
-            {sourceCoverage.covered.length} of {sourceCoverage.total} report
-            types.
+            <strong>Selected run coverage:</strong>{" "}
+            {sourceCoverage.covered.length} of {sourceCoverage.total} core
+            reports.
             {sourceCoverage.coreTypesRepresented
               ? " Completed purchase orders, stocktakes, and historical costs are represented."
               : ` Still needed in one complete run: ${sourceCoverage.missing.map(stockyReportTypeLabel).join(", ")}.`}
@@ -1412,23 +1416,23 @@ function Findings({ data, selectedBatchId }: ViewProps) {
 }
 
 function Exports({ data, selectedBatchId }: ViewProps) {
-  const reviewKitAvailable = data.billing.active;
+  const migrationPackageAvailable = data.billing.active;
 
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
         <div className={styles.sectionHeading}>
           <div>
-            <p className={styles.eyebrow}>Review handoff</p>
-            <h3>Download the complete review kit</h3>
+            <p className={styles.eyebrow}>Migration handoff</p>
+            <h3>Download the complete migration package</h3>
             <p>
               One ZIP with every preserved original CSV, all four generated
               reports, and a SHA-256 checksum manifest.
             </p>
           </div>
-          {selectedBatchId && reviewKitAvailable ? (
+          {selectedBatchId && migrationPackageAvailable ? (
             <AuthenticatedDownloadButton
-              label="Download review kit"
+              label="Download migration package"
               path={`/app/review-kit?batch=${encodeURIComponent(selectedBatchId)}`}
               primary
             />
@@ -1573,7 +1577,7 @@ function Settings({ data }: { data: LoaderData }) {
             <dd>Included</dd>
           </div>
           <div>
-            <dt>All reports and review kit</dt>
+            <dt>All reports and migration package</dt>
             <dd>Included</dd>
           </div>
           <div>
@@ -1748,7 +1752,7 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 function StatusPill({ value }: { value: string }) {
   return (
     <span className={`${styles.pill} ${styles[`pill${value}`] ?? ""}`}>
-      {humanize(value)}
+      {STATUS_LABELS[value] ?? humanize(value)}
     </span>
   );
 }
