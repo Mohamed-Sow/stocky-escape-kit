@@ -8,6 +8,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import db from "../db.server";
 import { toCsv } from "./csv.server";
+import { getExportFilename } from "./export-filenames";
 
 type NormalizedPayload = {
   sourceFilename?: string;
@@ -19,16 +20,6 @@ export type ExportGenerationOptions = {
   priorityChecklist?: boolean;
   includeLocationMismatches?: boolean;
 };
-
-const SKU_GAP_CATEGORIES = new Set<FindingCategory>([
-  FindingCategory.MISSING_SKU,
-  FindingCategory.UNMATCHED_SHOPIFY_SKU,
-  FindingCategory.DUPLICATE_SKU,
-  FindingCategory.MISSING_COST,
-  FindingCategory.MISSING_BARCODE,
-  FindingCategory.MISSING_VENDOR,
-  FindingCategory.LOCATION_MISMATCH,
-]);
 
 const EXPORT_PAGE_SIZE = 500;
 
@@ -67,7 +58,7 @@ type SupplierExportRecord = Prisma.ParsedRecordGetPayload<{
   select: typeof SUPPLIER_RECORD_SELECT;
 }>;
 
-const SKU_GAP_FINDING_SELECT = {
+const AUDIT_FINDING_SELECT = {
   id: true,
   severity: true,
   category: true,
@@ -75,11 +66,12 @@ const SKU_GAP_FINDING_SELECT = {
   title: true,
   message: true,
   recommendedAction: true,
+  source: true,
   createdAt: true,
 } satisfies Prisma.AuditFindingSelect;
 
-type SkuGapExportFinding = Prisma.AuditFindingGetPayload<{
-  select: typeof SKU_GAP_FINDING_SELECT;
+type AuditExportFinding = Prisma.AuditFindingGetPayload<{
+  select: typeof AUDIT_FINDING_SELECT;
 }>;
 
 export function isExportType(value: unknown): value is ExportType {
@@ -100,6 +92,15 @@ export async function generateExport({
   exportType: ExportType;
   options?: ExportGenerationOptions;
 }) {
+  const ownedRun = await db.uploadBatch.findFirst({
+    where: { id: batchId, storeId },
+    select: { createdAt: true },
+  });
+
+  if (!ownedRun) {
+    throw new Error("The selected migration run was not found.");
+  }
+
   const job = await db.exportJob.create({
     data: {
       storeId,
@@ -111,9 +112,7 @@ export async function generateExport({
 
   try {
     const csv = await buildCsv({ storeId, batchId, exportType, options });
-    const filename = `${exportType.toLowerCase()}-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
+    const filename = getExportFilename(exportType, ownedRun.createdAt);
 
     await db.exportJob.update({
       where: { id: job.id },
@@ -161,7 +160,7 @@ async function buildCsv({
   }
 
   if (exportType === ExportType.SKU_GAP_REPORT) {
-    return buildSkuGapCsv(storeId, batchId, options);
+    return buildAuditFindingsCsv(storeId, batchId, options);
   }
 
   if (exportType === ExportType.SUPPLIER_RECONSTRUCTION_REPORT) {
@@ -244,16 +243,11 @@ async function buildArchiveCsv(storeId: string, batchId: string) {
   return chunks.join("\n");
 }
 
-async function buildSkuGapCsv(
+async function buildAuditFindingsCsv(
   storeId: string,
   batchId: string,
   options: ExportGenerationOptions,
 ) {
-  const categories = [...SKU_GAP_CATEGORIES].filter(
-    (category) =>
-      options.includeLocationMismatches !== false ||
-      category !== FindingCategory.LOCATION_MISMATCH,
-  );
   const chunks = [
     toCsv([
       [
@@ -263,6 +257,9 @@ async function buildSkuGapCsv(
         "title",
         "message",
         "recommended_action",
+        "source_file",
+        "source_rows",
+        "source_evidence_json",
         "created_at",
       ],
     ]),
@@ -271,13 +268,13 @@ async function buildSkuGapCsv(
   let hasMore = true;
 
   while (hasMore) {
-    const findings: SkuGapExportFinding[] = await db.auditFinding.findMany({
+    const findings: AuditExportFinding[] = await db.auditFinding.findMany({
       where: {
         storeId,
         batchId,
-        category: {
-          in: categories,
-        },
+        ...(options.includeLocationMismatches === false
+          ? { category: { not: FindingCategory.LOCATION_MISMATCH } }
+          : {}),
       },
       orderBy: [
         { severity: "asc" },
@@ -287,7 +284,7 @@ async function buildSkuGapCsv(
       ],
       take: EXPORT_PAGE_SIZE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      select: SKU_GAP_FINDING_SELECT,
+      select: AUDIT_FINDING_SELECT,
     });
 
     if (findings.length === 0) {
@@ -297,15 +294,22 @@ async function buildSkuGapCsv(
 
     chunks.push(
       toCsv(
-        findings.map((finding) => [
-          finding.severity,
-          finding.category,
-          finding.sku ?? "",
-          finding.title,
-          finding.message,
-          finding.recommendedAction,
-          finding.createdAt.toISOString(),
-        ]),
+        findings.map((finding) => {
+          const source = readFindingSource(finding.source);
+
+          return [
+            finding.severity,
+            finding.category,
+            finding.sku ?? "",
+            finding.title,
+            finding.message,
+            finding.recommendedAction,
+            source.filename,
+            source.rows,
+            JSON.stringify(finding.source ?? {}),
+            finding.createdAt.toISOString(),
+          ];
+        }),
       ),
     );
 
@@ -314,6 +318,25 @@ async function buildSkuGapCsv(
   }
 
   return chunks.join("\n");
+}
+
+function readFindingSource(source: Prisma.JsonValue | null) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return { filename: "", rows: "" };
+  }
+
+  const filename = typeof source.filename === "string" ? source.filename : "";
+  const row =
+    typeof source.sourceRowNumber === "number"
+      ? String(source.sourceRowNumber)
+      : "";
+  const rows = Array.isArray(source.sourceRowNumbers)
+    ? source.sourceRowNumbers
+        .filter((value): value is number => typeof value === "number")
+        .join("; ")
+    : row;
+
+  return { filename, rows };
 }
 
 async function buildSupplierCsv(storeId: string, batchId: string) {
@@ -408,10 +431,9 @@ async function buildMigrationChecklistCsv(
   const findingWhere: Prisma.AuditFindingWhereInput = {
     storeId,
     batchId,
-    category:
-      options.includeLocationMismatches === false
-        ? { not: FindingCategory.LOCATION_MISMATCH }
-        : undefined,
+    ...(options.includeLocationMismatches === false
+      ? { category: { not: FindingCategory.LOCATION_MISMATCH } }
+      : {}),
   };
   const [recordCount, reportTypeRows, batch, findingGroups] = await Promise.all(
     [
@@ -521,10 +543,10 @@ async function buildMigrationChecklistCsv(
     ],
     [
       "high",
-      "Resolve critical SKU issues",
+      "Resolve critical data and matching issues",
       criticalCount === 0 ? "ready" : "needs_attention",
       `${criticalCount} critical findings`,
-      "Resolve missing and unmatched SKUs before relying on migration reports.",
+      "Fix failed CSVs, missing SKUs, and unmatched Shopify SKUs before relying on migration reports.",
     ],
     [
       "medium",

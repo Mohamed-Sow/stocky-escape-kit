@@ -25,6 +25,12 @@ import {
 } from "../app/lib/catalog.server";
 import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
+import {
+  formatRunFilenameStamp,
+  getExportFilename,
+  getReviewKitFilename,
+} from "../app/lib/export-filenames";
+import { resolveRunHistoryPage } from "../app/lib/pagination";
 import { generateReviewKit } from "../app/lib/review-kit.server";
 import { generateReviewerFixturePack } from "../app/lib/review-fixtures.server";
 import {
@@ -66,8 +72,54 @@ import {
   parseStockyCsv,
   reportRequiresSku,
 } from "../app/lib/stocky-parser.server";
+import { getSafeRequestPath } from "../server/request-logging.mjs";
 
 const STOCKY_FIXTURE_DIR = path.join(process.cwd(), "fixtures", "stocky");
+
+test("production request logs omit Shopify query credentials", () => {
+  assert.equal(
+    getSafeRequestPath(
+      "/app?embedded=1&host=c2hvcGlmeS5jb20&hmac=secret&id_token=short-lived-token&shop=example.myshopify.com",
+    ),
+    "/app",
+  );
+
+  const packageJson = JSON.parse(
+    readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+  ) as { scripts: { start: string } };
+  assert.equal(packageJson.scripts.start, "node ./server/index.mjs");
+  assert.match(
+    readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8"),
+    /COPY --from=build \/app\/server \.\/server/,
+  );
+});
+
+test("migration run history pages remain bounded and reachable", () => {
+  assert.deepEqual(resolveRunHistoryPage(null, 0), {
+    page: 1,
+    pageCount: 1,
+    pageSize: 25,
+    skip: 0,
+    total: 0,
+  });
+  assert.equal(resolveRunHistoryPage("2", 75).skip, 25);
+  assert.equal(resolveRunHistoryPage("99", 75).page, 3);
+  assert.equal(resolveRunHistoryPage("invalid", 75).page, 1);
+});
+
+test("export filenames identify the selected migration run", () => {
+  const createdAt = new Date("2026-07-10T15:36:04.123Z");
+
+  assert.equal(formatRunFilenameStamp(createdAt), "20260710T153604123Z");
+  assert.equal(
+    getExportFilename(ExportType.SKU_GAP_REPORT, createdAt),
+    "stocky-audit-findings-run-20260710T153604123Z.csv",
+  );
+  assert.equal(
+    getReviewKitFilename(createdAt),
+    "stocky-review-kit-run-20260710T153604123Z.zip",
+  );
+});
 
 test("public reviewer fixture pack contains exactly the ten canonical CSVs", async () => {
   const archive = unzipSync(await generateReviewerFixturePack());
@@ -1263,6 +1315,19 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       fakeDb.state.auditFindings.length,
       findingCountBeforeOwnershipCheck,
     );
+    const exportJobsBeforeOwnershipCheck = fakeDb.state.exportJobs.length;
+    await assert.rejects(
+      generateExport({
+        storeId: otherStore.id,
+        batchId: result.batchId,
+        exportType: ExportType.ARCHIVE_CSV,
+      }),
+      /selected migration run was not found/i,
+    );
+    assert.equal(
+      fakeDb.state.exportJobs.length,
+      exportJobsBeforeOwnershipCheck,
+    );
 
     const categories = new Set(
       fakeDb.state.auditFindings.map((finding) => finding.category),
@@ -1368,18 +1433,22 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.match(archive.body, /Internal Code #2/);
     assert.doesNotMatch(archive.body, /OTHER-BATCH-ONLY/);
 
-    const skuGap = await generateExport({
+    const auditFindings = await generateExport({
       storeId: store.id,
       batchId: result.batchId,
       exportType: ExportType.SKU_GAP_REPORT,
     });
     assert.ok(
-      skuGap.body.startsWith(
-        "severity,category,sku,title,message,recommended_action,created_at",
+      auditFindings.body.startsWith(
+        "severity,category,sku,title,message,recommended_action,source_file,source_rows,source_evidence_json,created_at",
       ),
     );
-    assert.match(skuGap.body, /UNMATCHED_SHOPIFY_SKU/);
-    assert.match(skuGap.body, /LOCATION_MISMATCH/);
+    assert.match(auditFindings.body, /UNMATCHED_SHOPIFY_SKU/);
+    assert.match(auditFindings.body, /LOCATION_MISMATCH/);
+    assert.match(auditFindings.body, /PARSE_ERROR/);
+    assert.match(auditFindings.body, /OPEN_PURCHASE_ORDER_INDICATOR/);
+    assert.match(auditFindings.body, /SUPPLIER_RECONSTRUCTION_CANDIDATE/);
+    assert.match(auditFindings.body, /stocky-products-edge-cases\.csv,8/);
 
     const supplier = await generateExport({
       storeId: store.id,
@@ -1434,18 +1503,23 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       batchId: result.batchId,
     });
     const zipEntries = unzipSync(reviewKit.bytes);
-    const exportDate = new Date().toISOString().slice(0, 10);
+    const runCreatedAt = fakeDb.state.uploadBatches.find(
+      (batch) => batch.id === result.batchId,
+    )?.createdAt;
+    assert.ok(runCreatedAt);
+    const runStamp = formatRunFilenameStamp(runCreatedAt);
     const zipNames = Object.keys(zipEntries).sort();
     assert.deepEqual(
       zipNames.filter((filename) => !filename.startsWith("source/")),
       [
-        `archive_csv-${exportDate}.csv`,
         "manifest.json",
-        `migration_checklist-${exportDate}.csv`,
-        `sku_gap_report-${exportDate}.csv`,
-        `supplier_reconstruction_report-${exportDate}.csv`,
+        `stocky-audit-findings-run-${runStamp}.csv`,
+        `stocky-migration-checklist-run-${runStamp}.csv`,
+        `stocky-parsed-archive-run-${runStamp}.csv`,
+        `stocky-supplier-evidence-run-${runStamp}.csv`,
       ],
     );
+    assert.equal(reviewKit.filename, getReviewKitFilename(runCreatedAt));
     assert.equal(
       zipNames.filter((filename) => filename.startsWith("source/")).length,
       fixtureFilenames.length,
@@ -1484,6 +1558,37 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
         () => ExportStatus.SUCCEEDED,
       ),
     );
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("review kit fails closed when preserved source bytes are unavailable", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("missing-source-stocky-dev.myshopify.com");
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(["SKU,Title\nSOURCE-1,Preserved item\n"], "source.csv", {
+          type: "text/csv",
+        }),
+      ],
+    });
+    const source = fakeDb.state.uploadedFiles[0];
+    assert.ok(source);
+    source.rawContentBase64 = null;
+
+    await assert.rejects(
+      () =>
+        generateReviewKit({
+          storeId: store.id,
+          batchId: result.batchId,
+        }),
+      /Preserved source bytes are unavailable for source\.csv/,
+    );
+    assert.equal(fakeDb.state.exportJobs.length, 0);
   } finally {
     fakeDb.restore();
   }

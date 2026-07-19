@@ -7,9 +7,11 @@ interface LoginErrorMessage {
 
 export function loginErrorMessage(loginErrors: LoginError): LoginErrorMessage {
   if (loginErrors?.shop === LoginErrorType.MissingShop) {
-    return { shop: "Please enter your shop domain to log in" };
+    return { shop: "Open Stocky Escape Kit from Shopify admin to sign in." };
   } else if (loginErrors?.shop === LoginErrorType.InvalidShop) {
-    return { shop: "Please enter a valid shop domain to log in" };
+    return {
+      shop: "This Shopify install link is invalid. Return to Shopify admin and open Stocky Escape Kit from Apps.",
+    };
   }
 
   return {};

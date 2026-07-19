@@ -12,7 +12,7 @@ Build a Shopify-only public app that helps merchants preserve raw Stocky CSV exp
 - Build parser and normalizer modules that record upload batch, source file, parsed rows, parse warnings, unknown columns, and row-level validation issues.
 - Use fully cursor-paginated Shopify GraphQL queries to fetch products, variants, inventory items, locations, SKUs, barcodes, vendor, and cost-related fields available to the app. Fail closed at the configured safety limit rather than auditing a partial catalog.
 - Create audit reports for unmatched SKUs, duplicate SKUs, missing cost, missing barcode, missing vendor, location mismatches, open purchase order indicators, and supplier reconstruction candidates.
-- Provide exports for archive CSV, SKU gap report, supplier reconstruction report, and migration checklist.
+- Provide exports for the parsed archive, complete audit findings, supplier evidence, and migration checklist.
 - Include the complete migration workflow on every paid tier. Differentiate plans by safe file, row, run, and retained-source capacity instead of artificial report locks.
 
 ## Data Model

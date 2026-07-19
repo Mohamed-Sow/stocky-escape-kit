@@ -82,8 +82,8 @@ export const loader = exportResponse;
 export const action = exportResponse;
 
 export const EXPORT_LABELS: Record<ExportType, string> = {
-  ARCHIVE_CSV: "Archive CSV",
-  SKU_GAP_REPORT: "SKU gap report",
-  SUPPLIER_RECONSTRUCTION_REPORT: "Supplier reconstruction",
+  ARCHIVE_CSV: "Parsed archive",
+  SKU_GAP_REPORT: "Audit findings",
+  SUPPLIER_RECONSTRUCTION_REPORT: "Supplier evidence",
   MIGRATION_CHECKLIST: "Migration checklist",
 };

@@ -337,6 +337,21 @@ table {
   min-width: 720px;
   width: 100%;
 }
+.historyPagination {
+  align-items: center;
+  border-top: 1px solid #ebebeb;
+  color: #616161;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 16px;
+}
+.historyPagination div {
+  display: flex;
+  gap: 8px;
+}
 th,
 td {
   border-bottom: 1px solid #ebebeb;
@@ -598,5 +613,9 @@ td small {
   .selectedHistoryRow {
     align-items: start;
     grid-template-columns: 1fr;
+  }
+  .historyPagination {
+    align-items: flex-start;
+    gap: 12px;
   }
 }

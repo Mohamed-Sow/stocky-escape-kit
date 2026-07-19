@@ -48,6 +48,7 @@ import {
   RequestSizeLimitError,
   readFormDataWithinLimit,
 } from "../lib/request-size.server";
+import { resolveRunHistoryPage } from "../lib/pagination";
 import { importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
@@ -96,6 +97,15 @@ const FINDING_CATEGORIES = [
 ] as const satisfies readonly FindingCategory[];
 
 const FINDING_DISPLAY_LIMIT = 500;
+const DISPLAY_ACRONYMS = new Set([
+  "api",
+  "csv",
+  "id",
+  "po",
+  "pos",
+  "sku",
+  "ui",
+]);
 
 const EXPORT_DETAILS: Record<
   ExportType,
@@ -107,9 +117,9 @@ const EXPORT_DETAILS: Record<
       "Every normalized row with its raw values, source file, and checksum evidence.",
   },
   SKU_GAP_REPORT: {
-    label: "SKU gap report",
+    label: "Audit findings",
     description:
-      "Critical matching gaps and Shopify product-data issues for this run.",
+      "Every critical, warning, and informational finding for this run.",
   },
   SUPPLIER_RECONSTRUCTION_REPORT: {
     label: "Supplier evidence",
@@ -150,13 +160,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const requestedBatchId = url.searchParams.get("batch");
-  const [batches, latestSyncAttempt, storageAggregate] = await Promise.all([
-    db.uploadBatch.findMany({
-      where: { storeId: store.id },
-      orderBy: { createdAt: "desc" },
-      take: 25,
-      include: uploadBatchOverviewInclude,
-    }),
+  const [batchTotal, latestSyncAttempt, storageAggregate] = await Promise.all([
+    db.uploadBatch.count({ where: { storeId: store.id } }),
     db.shopifyCatalogSnapshot.findFirst({
       where: { storeId: store.id },
       orderBy: { createdAt: "desc" },
@@ -178,6 +183,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       _sum: { rawContentByteLength: true },
     }),
   ]);
+  const runHistory = resolveRunHistoryPage(
+    url.searchParams.get("runsPage"),
+    batchTotal,
+  );
+  const batches = await db.uploadBatch.findMany({
+    where: { storeId: store.id },
+    orderBy: { createdAt: "desc" },
+    skip: runHistory.skip,
+    take: runHistory.pageSize,
+    include: uploadBatchOverviewInclude,
+  });
   const selectedBatch = requestedBatchId
     ? await requireOwnedUploadBatch({
         storeId: store.id,
@@ -239,6 +255,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     catalogVariantLimit: getCatalogVariantLimit(),
     billingPlans: BILLING_PLAN_DETAILS,
+    runHistory,
     batches: batches.map(serializeBatch),
     selectedBatch: selectedBatch ? serializeBatch(selectedBatch) : null,
     latestSnapshot: displaySnapshot
@@ -471,7 +488,7 @@ export default function Index() {
     data,
     selectedBatchId,
     onViewChange: (nextView: View) =>
-      navigate(viewHref(nextView, selectedBatchId)),
+      navigate(viewHref(nextView, selectedBatchId, data.runHistory.page)),
   };
 
   return (
@@ -490,7 +507,9 @@ export default function Index() {
           </div>
           <RunPicker
             batches={data.batches}
+            selectedBatch={data.selectedBatch}
             selectedBatchId={selectedBatchId}
+            runsPage={data.runHistory.page}
             view={view}
           />
         </header>
@@ -499,7 +518,7 @@ export default function Index() {
           {VIEWS.map((item) => (
             <Link
               key={item}
-              to={viewHref(item, selectedBatchId)}
+              to={viewHref(item, selectedBatchId, data.runHistory.page)}
               className={item === view ? styles.activeTab : styles.tab}
               aria-current={item === view ? "page" : undefined}
             >
@@ -764,6 +783,16 @@ function Files({ data, selectedBatchId }: ViewProps) {
             supplier records cannot be exported directly
           </li>
         </ul>
+        <p>
+          <a
+            href="https://help.shopify.com/en/manual/products/inventory/transitioning-from-stocky"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Review Shopify&apos;s current export and cutover instructions
+          </a>
+          .
+        </p>
         <p className={styles.inlineNotice}>
           Catalog audits currently verify stores with up to{" "}
           {data.catalogVariantLimit.toLocaleString()} Shopify variants. Larger
@@ -810,6 +839,9 @@ function Files({ data, selectedBatchId }: ViewProps) {
             <p className={styles.eyebrow}>History</p>
             <h3>Migration runs</h3>
           </div>
+          <span className={styles.countLabel}>
+            {data.runHistory.total.toLocaleString()} total
+          </span>
         </div>
         {data.batches.length ? (
           <div className={styles.historyList}>
@@ -817,7 +849,9 @@ function Files({ data, selectedBatchId }: ViewProps) {
               <button
                 type="button"
                 key={batch.id}
-                onClick={() => navigate(viewHref("files", batch.id))}
+                onClick={() =>
+                  navigate(viewHref("files", batch.id, data.runHistory.page))
+                }
                 className={
                   batch.id === selectedBatchId
                     ? styles.selectedHistoryRow
@@ -841,6 +875,35 @@ function Files({ data, selectedBatchId }: ViewProps) {
             detail="Your migration runs will appear here without replacing earlier raw archives."
           />
         )}
+        {data.runHistory.pageCount > 1 ? (
+          <nav
+            className={styles.historyPagination}
+            aria-label="Migration run history pages"
+          >
+            <span>
+              Page {data.runHistory.page.toLocaleString()} of{" "}
+              {data.runHistory.pageCount.toLocaleString()}
+            </span>
+            <div>
+              {data.runHistory.page > 1 ? (
+                <Link
+                  className={styles.secondaryButton}
+                  to={viewHref("files", null, data.runHistory.page - 1)}
+                >
+                  Newer runs
+                </Link>
+              ) : null}
+              {data.runHistory.page < data.runHistory.pageCount ? (
+                <Link
+                  className={styles.secondaryButton}
+                  to={viewHref("files", null, data.runHistory.page + 1)}
+                >
+                  Older runs
+                </Link>
+              ) : null}
+            </div>
+          </nav>
+        ) : null}
       </section>
     </div>
   );
@@ -1046,7 +1109,7 @@ function FilesTable({ files }: { files: SerializedBatch["files"] }) {
             <th scope="col">Type</th>
             <th scope="col">Status</th>
             <th scope="col">Rows</th>
-            <th scope="col">Warnings</th>
+            <th scope="col">Parser warnings</th>
             <th scope="col">Raw archive</th>
           </tr>
         </thead>
@@ -1183,8 +1246,8 @@ function Findings({ data, selectedBatchId }: ViewProps) {
           <p className={styles.inlineNotice}>
             To keep this page responsive, it shows the first{" "}
             {data.findings.length.toLocaleString()} findings, ordered by
-            severity. Download the complete SKU gap report for every catalog
-            finding in this run.
+            severity. Download the complete audit findings CSV for every finding
+            in this run.
           </p>
         ) : null}
         {!selectedBatchId ? (
@@ -1287,14 +1350,14 @@ function Exports({ data, selectedBatchId }: ViewProps) {
         <div className={styles.sectionHeading}>
           <div>
             <p className={styles.eyebrow}>History</p>
-            <h3>Exports for this run</h3>
+            <h3>Recent export activity</h3>
           </div>
         </div>
         {data.exportJobs.length ? (
           <div className={styles.tableWrap}>
             <table>
               <caption className={styles.srOnly}>
-                Export history for the selected migration run
+                Latest export activity for the selected migration run
               </caption>
               <thead>
                 <tr>
@@ -1422,8 +1485,9 @@ function Settings({ data }: { data: LoaderData }) {
           Raw CSV bytes, file checksums, parsed rows, catalog snapshots,
           findings, and export history stay with this store until you reset
           them. A canceled subscription stays read-only so you can retrieve or
-          delete this evidence. Uninstalling the app immediately deletes the
-          store record and its migration data.
+          delete this evidence. Uninstalling the app triggers deletion of the
+          store record and its migration data when Shopify delivers the
+          uninstall webhook.
         </p>
         <p>
           The app uses read-only Shopify GraphQL access and never imports
@@ -1485,26 +1549,34 @@ function Settings({ data }: { data: LoaderData }) {
 
 function RunPicker({
   batches,
+  selectedBatch,
   selectedBatchId,
+  runsPage,
   view,
 }: {
   batches: LoaderData["batches"];
+  selectedBatch: LoaderData["selectedBatch"];
   selectedBatchId: string | null;
+  runsPage: number;
   view: View;
 }) {
   const navigate = useNavigate();
+  const options =
+    selectedBatch && !batches.some((batch) => batch.id === selectedBatch.id)
+      ? [selectedBatch, ...batches]
+      : batches;
   return (
     <label className={styles.runPicker}>
       Migration run
       <select
         value={selectedBatchId ?? ""}
         onChange={(event) =>
-          navigate(viewHref(view, event.target.value || null))
+          navigate(viewHref(view, event.target.value || null, runsPage))
         }
-        disabled={!batches.length}
+        disabled={!options.length}
       >
-        <option value="">No runs yet</option>
-        {batches.map((batch) => (
+        {!options.length ? <option value="">No runs yet</option> : null}
+        {options.map((batch) => (
           <option key={batch.id} value={batch.id}>
             {formatRunName(batch.createdAt)} · {batch.fileCount} files
           </option>
@@ -1723,9 +1795,10 @@ type ViewProps = {
   onViewChange: (view: View) => void;
 };
 
-function viewHref(view: View, batchId: string | null) {
+function viewHref(view: View, batchId: string | null, runsPage = 1) {
   const params = new URLSearchParams();
   if (batchId) params.set("batch", batchId);
+  if (runsPage > 1) params.set("runsPage", String(runsPage));
   const query = params.size ? `?${params}` : "";
   return `/app/${view}${query}`;
 }
@@ -1736,7 +1809,11 @@ function humanize(value: string) {
   return value
     .toLowerCase()
     .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) =>
+      DISPLAY_ACRONYMS.has(part)
+        ? part.toUpperCase()
+        : part.charAt(0).toUpperCase() + part.slice(1),
+    )
     .join(" ");
 }
 function formatDate(value: string) {

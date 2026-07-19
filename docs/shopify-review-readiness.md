@@ -41,7 +41,7 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 6. Run Shopify catalog sync.
 7. Review audit findings for SKU gaps, missing cost/barcode/vendor, supplier hints, and open purchase order indicators.
 8. Confirm 54 audit findings for the canonical review-store catalog snapshot. Missing-SKU rows and open purchase orders should be grouped into actionable findings instead of repeated noise.
-9. Download archive, SKU gap, supplier reconstruction, and migration checklist exports.
+9. Download parsed archive, complete audit findings, supplier evidence, and migration checklist exports.
 10. Download the review-kit ZIP and verify it contains all ten original CSV files under `source/`, the four generated reports, and `manifest.json` with byte counts and SHA-256 checksums.
 
 ## Claims boundary

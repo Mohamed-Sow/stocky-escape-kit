@@ -59,11 +59,12 @@ export default function PrivacyPolicy() {
         <p>
           Migration uploads, raw files, catalog snapshots, findings, and export
           records remain available so the merchant can preserve a traceable
-          migration record. An authenticated store administrator can permanently
-          delete that store&apos;s migration data from Settings. If a
-          subscription ends, existing evidence stays available read-only for
-          retrieval or deletion. Uninstalling the app immediately deletes the
-          store record and its migration data; required Shopify privacy webhooks
+          migration record. An authenticated merchant user with access to the
+          app can permanently delete that store&apos;s migration data from
+          Settings. If a subscription ends, existing evidence stays available
+          read-only for retrieval or deletion. Uninstalling the app triggers
+          deletion of the store record and its migration data when Shopify
+          delivers the uninstall webhook; required Shopify privacy webhooks
           remain idempotent.
         </p>
 

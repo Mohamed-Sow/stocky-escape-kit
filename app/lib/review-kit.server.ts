@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { ExportType } from "@prisma/client";
 import { strToU8, zipSync } from "fflate";
 import db from "../db.server";
+import { getReviewKitFilename } from "./export-filenames";
 import { generateExport, type ExportGenerationOptions } from "./exports.server";
 import { safeDownloadFilename } from "./filenames.server";
 
@@ -23,22 +24,13 @@ export async function generateReviewKit({
     sha256: string;
   }> = [];
 
-  for (const exportType of Object.values(ExportType)) {
-    const report = await generateExport({
-      storeId,
-      batchId,
-      exportType,
-      options,
-    });
-    const bytes = Buffer.from(report.body, "utf8");
-    entries[report.filename] = new Uint8Array(bytes);
+  const run = await db.uploadBatch.findFirst({
+    where: { id: batchId, storeId },
+    select: { createdAt: true },
+  });
 
-    manifest.push({
-      kind: "report",
-      filename: report.filename,
-      bytes: bytes.byteLength,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    });
+  if (!run) {
+    throw new Error("The selected migration run was not found.");
   }
 
   const sourceFiles = await db.uploadedFile.findMany({
@@ -65,7 +57,11 @@ export async function generateReviewKit({
       select: { rawContentBase64: true },
     });
 
-    if (!preserved?.rawContentBase64) continue;
+    if (preserved?.rawContentBase64 == null) {
+      throw new Error(
+        `Preserved source bytes are unavailable for ${source.originalFilename}.`,
+      );
+    }
     const bytes = Buffer.from(preserved.rawContentBase64, "base64");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
 
@@ -85,6 +81,24 @@ export async function generateReviewKit({
     });
   }
 
+  for (const exportType of Object.values(ExportType)) {
+    const report = await generateExport({
+      storeId,
+      batchId,
+      exportType,
+      options,
+    });
+    const bytes = Buffer.from(report.body, "utf8");
+    entries[report.filename] = new Uint8Array(bytes);
+
+    manifest.push({
+      kind: "report",
+      filename: report.filename,
+      bytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  }
+
   const manifestBody = `${JSON.stringify(
     {
       format: "Stocky Escape Kit migration record",
@@ -99,7 +113,7 @@ export async function generateReviewKit({
 
   return {
     bytes: zipSync(entries, { level: 6 }),
-    filename: `stocky-review-kit-${new Date().toISOString().slice(0, 10)}.zip`,
+    filename: getReviewKitFilename(run.createdAt),
     manifest,
   };
 }

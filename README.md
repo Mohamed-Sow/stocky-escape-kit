@@ -26,10 +26,10 @@ This app should not become full inventory management software in v1.
 - Catalog sync uses the Shopify GraphQL Admin API with `read_products`, `read_inventory`, and `read_locations`.
 - Catalog pagination either verifies the complete product-variant and location snapshot within the configured safety limit or fails without generating a partial audit.
 - Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog. Historical transaction rows are not misclassified as duplicate products, and supplier-only evidence does not create false missing-SKU blockers.
-- Every active plan includes the archive, SKU gap, supplier evidence, migration checklist, location audit, and complete review kit. The kit packages every preserved original CSV with all generated reports and a SHA-256 manifest. Plans differ by safe processing and storage capacity, not by withholding core migration outputs. Raw CSVs also remain individually downloadable from the parsed files table.
+- Every active plan includes the parsed archive, complete audit findings, supplier evidence, migration checklist, location audit, and complete review kit. The kit packages every preserved original CSV with all generated reports and a SHA-256 manifest. Plans differ by safe processing and storage capacity, not by withholding core migration outputs. Raw CSVs also remain individually downloadable from the parsed files table.
 - The migration checklist includes the operational cutover work Shopify cannot infer from read-only data: closing or recreating in-flight quantities, testing replacement Shopify workflows, training staff, removing the Stocky POS tile, and updating Stocky-dependent integrations.
 - A transient Partner API failure uses the last verified active billing state for at most 24 hours. A successful no-subscription response cancels access immediately; an outage cannot grant indefinite paid access.
-- A canceled subscription remains read-only so the merchant can retrieve or delete existing evidence. `APP_UNINSTALLED` immediately deletes the store and all cascaded migration data.
+- A canceled subscription remains read-only so the merchant can retrieve or delete existing evidence. Delivery of Shopify's `APP_UNINSTALLED` webhook deletes the store and all cascaded migration data.
 
 ## Environment
 

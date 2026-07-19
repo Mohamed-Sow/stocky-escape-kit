@@ -92,8 +92,8 @@ export default function App() {
           <article>
             <h3>Hand off actionable work</h3>
             <p>
-              Export SKU gaps, supplier evidence, and a checklist that separates
-              blockers from manual follow-up.
+              Export every audit finding, supplier evidence, and a checklist
+              that separates blockers from manual follow-up.
             </p>
           </article>
         </div>
@@ -108,7 +108,7 @@ export default function App() {
           Shopify&apos;s transition guidance says suppliers cannot be exported
           directly from Stocky. Preserve supplier clues from purchase orders and
           custom SKU reports, then recreate the records manually.{" "}
-          <a href="https://help.shopify.com/en/manual/products/inventory/getting-started/transitioning-from-stocky">
+          <a href="https://help.shopify.com/en/manual/products/inventory/transitioning-from-stocky">
             Read Shopify&apos;s transition guidance
           </a>
           .
