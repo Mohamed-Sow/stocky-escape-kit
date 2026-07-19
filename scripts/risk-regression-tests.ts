@@ -1407,10 +1407,15 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.match(checklist.body, /Upload Stocky CSV exports/);
     assert.match(
       checklist.body,
-      /Historical Stocky purchase orders cannot be imported into Shopify/,
+      /historical Stocky purchase orders cannot be imported into Shopify/i,
     );
     assert.match(checklist.body, /Confirm source report coverage/);
     assert.match(checklist.body, /Rebuild supplier records/);
+    assert.match(checklist.body, /Set the purchasing cutover/);
+    assert.match(checklist.body, /Test Shopify replacement workflows/);
+    assert.match(checklist.body, /Train staff and remove the Stocky POS tile/);
+    assert.match(checklist.body, /Update Stocky-dependent integrations/);
+    assert.match(checklist.body, /recreate only its remaining quantities/);
 
     const priorityChecklist = await generateExport({
       storeId: store.id,
@@ -1545,6 +1550,42 @@ test("header-only Stocky exports remain preserved as successful empty evidence",
       FileParseStatus.PARSED,
     );
     assert.equal(fakeDb.state.uploadedFiles[0]?.rawContentByteLength, 17);
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("in-transit Stocky purchase orders remain visible as cutover work", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("in-transit-stocky-dev.myshopify.com");
+
+  try {
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files: [
+        new File(
+          [
+            "PO Number,Status,SKU,Qty Ordered\n",
+            "PO-TRANSIT,In Transit,TRANSIT-1,4\n",
+          ],
+          "stocky-purchase-orders.csv",
+          { type: "text/csv" },
+        ),
+      ],
+    });
+
+    assert.equal(result.importedRowCount, 1);
+    const finding = fakeDb.state.auditFindings.find(
+      (candidate) =>
+        candidate.category === FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
+    );
+    assert.ok(finding);
+    assert.match(finding.message, /PO-TRANSIT/);
+    assert.match(finding.message, /In Transit/);
+    assert.match(
+      finding.recommendedAction,
+      /recreate only its remaining quantities in Shopify/,
+    );
   } finally {
     fakeDb.restore();
   }

@@ -53,13 +53,20 @@ export default function App() {
             </p>
           </div>
           <aside className={styles.deadlineCard}>
-            <p className={styles.eyebrow}>Do this before access ends</p>
+            <p className={styles.eyebrow}>
+              Export before Stocky becomes read-only
+            </p>
             <ol>
               <li>Export product or custom SKU/variant reports.</li>
               <li>Export historical purchase orders and stocktakes.</li>
               <li>Export inventory activity and historical cost reports.</li>
               <li>Keep every original CSV in a separate safe location.</li>
             </ol>
+            <p className={styles.deadlineNote}>
+              Shopify says read-only export access will continue for at least 90
+              days after August 31. Operational Stocky workflows and APIs still
+              stop on the shutdown date, so finish the cutover first.
+            </p>
           </aside>
         </div>
       </header>

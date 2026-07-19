@@ -396,7 +396,7 @@ export async function regenerateAuditFindings({
         title: "Stocky purchase order may still need action",
         message: `${reference} has ${purchaseOrder.sourceRowNumbers.length} preserved row${purchaseOrder.sourceRowNumbers.length === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.`,
         recommendedAction:
-          "Review this purchase order manually. Historical Stocky purchase orders cannot be imported into Shopify.",
+          "Receive and close this order before cutover when possible. If it remains open, recreate only its remaining quantities in Shopify; historical Stocky purchase orders cannot be imported.",
         source: {
           fileId: file.id,
           filename: file.originalFilename,
@@ -550,5 +550,11 @@ function isOpenPurchaseOrderStatus(status: string | null | undefined) {
     "ordered",
     "unreceived",
     "not received",
+    "in transit",
+    "in-transit",
+    "draft",
+    "sent",
+    "submitted",
+    "approved",
   ].some((openStatus) => value.includes(openStatus));
 }

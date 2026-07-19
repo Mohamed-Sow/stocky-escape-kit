@@ -118,6 +118,15 @@
   padding-left: 20px;
 }
 
+.deadlineNote {
+  border-top: 1px solid #e4e4de;
+  color: #626562;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 22px 0 0;
+  padding-top: 18px;
+}
+
 .content {
   background: #fff;
   max-width: none;

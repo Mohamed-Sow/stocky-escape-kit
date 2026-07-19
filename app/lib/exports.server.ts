@@ -508,7 +508,7 @@ async function buildMigrationChecklistCsv(
         ? "done"
         : "needs_attention",
       [...reportTypes].sort().join(", ") || "No parsed report types",
-      "Return to Stocky and export any missing historical report categories before access ends.",
+      "Return to Stocky and export any missing historical report categories before read-only export access expires.",
     ],
     [
       "high",
@@ -538,7 +538,7 @@ async function buildMigrationChecklistCsv(
       "Review open Stocky purchase orders",
       openPoCount === 0 ? "ready" : "manual_review",
       `${openPoCount} open purchase order indicators`,
-      "Review manually. Historical Stocky purchase orders cannot be imported into Shopify.",
+      "Receive and close each order before cutover when possible. If one remains open, recreate only its remaining quantities in Shopify; historical Stocky purchase orders cannot be imported into Shopify.",
     ],
     [
       "medium",
@@ -546,6 +546,34 @@ async function buildMigrationChecklistCsv(
       supplierEvidenceCount > 0 ? "manual_review" : "needs_attention",
       `${supplierEvidenceCount} supplier evidence finding${supplierEvidenceCount === 1 ? "" : "s"}`,
       "Use explicit supplier evidence first and verify vendor-only leads against purchase orders or custom SKU reports. Stocky supplier records cannot be exported directly.",
+    ],
+    [
+      "high",
+      "Set the purchasing cutover",
+      "manual_action",
+      "Shopify recommends stopping new Stocky purchase orders about 14 days before August 31, 2026",
+      "Choose an owner and cutover date, tell purchasing staff, and move new purchasing work to Shopify.",
+    ],
+    [
+      "high",
+      "Test Shopify replacement workflows",
+      "manual_action",
+      "A read-only catalog audit cannot verify staff workflow readiness",
+      "Complete a test purchase order, transfer, and inventory adjustment in Shopify. Test the Shopify POS path too if staff use it.",
+    ],
+    [
+      "medium",
+      "Train staff and remove the Stocky POS tile",
+      "manual_action",
+      "Team readiness is outside the uploaded CSV evidence",
+      "Train everyone responsible for inventory and remove Stocky's Transfers tile from the Shopify POS Smart Grid when the replacement process is ready.",
+    ],
+    [
+      "medium",
+      "Update Stocky-dependent integrations",
+      "manual_action",
+      "Stocky APIs stop working on August 31, 2026",
+      "Identify every ERP, warehouse, reporting, or automation integration that calls Stocky and move it to a supported Shopify workflow before shutdown.",
     ],
     [
       "low",

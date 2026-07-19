@@ -23,6 +23,7 @@ Use Stocky Escape Kit to:
 - Compare Stocky SKUs and locations with the current Shopify catalog.
 - Find missing or duplicate SKUs, cost, barcode, vendor, and location gaps.
 - Retain supplier hints and open-purchase-order evidence for manual review.
+- Follow an operational cutover checklist for in-flight orders, replacement Shopify workflows, staff training, POS cleanup, and Stocky-dependent integrations.
 - Download four focused CSV reports or one checksum-manifest migration record containing every preserved original CSV.
 
 Stocky Escape Kit uses read-only access to products, inventory, and locations. It does not change Shopify data, replace inventory management, or import historical Stocky purchase orders into Shopify. Historical purchase orders are preserved and reviewed as migration evidence.

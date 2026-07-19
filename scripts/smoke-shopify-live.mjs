@@ -217,6 +217,11 @@ function runStaticChecks() {
         "Public root must not render a manual shop-domain login form for App Store install flow.",
       );
     }
+    if (!publicIndexRoute.includes("at least 90")) {
+      failures.push(
+        "Public shutdown guidance must disclose Shopify's post-shutdown read-only export window instead of manufacturing false urgency.",
+      );
+    }
   }
 
   if (!existsSync(authLoginRoutePath)) {

@@ -708,6 +708,42 @@ function Overview({ data, onViewChange }: ViewProps) {
           )}
         </section>
       </div>
+      <section className={styles.panel}>
+        <p className={styles.eyebrow}>Operational cutover</p>
+        <h3>The archive is only half of the migration</h3>
+        <p>
+          These actions happen in Shopify or with your staff, so this read-only
+          app cannot mark them complete for you:
+        </p>
+        <ul className={styles.guidanceList}>
+          <li>
+            Stop creating Stocky purchase orders about 14 days before August 31,
+            then receive and close everything possible.
+          </li>
+          <li>
+            Recreate only remaining quantities from any in-flight order in
+            Shopify; historical purchase orders cannot be imported.
+          </li>
+          <li>
+            Test a Shopify purchase order, transfer, and inventory adjustment,
+            including Shopify POS workflows your staff use.
+          </li>
+          <li>
+            Train the inventory team, remove the Stocky POS tile, and update any
+            integration that still depends on Stocky APIs.
+          </li>
+        </ul>
+        <p>
+          <a
+            href="https://help.shopify.com/en/manual/products/inventory/transitioning-from-stocky"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Review Shopify&apos;s current Stocky cutover guidance
+          </a>
+          .
+        </p>
+      </section>
     </div>
   );
 }
@@ -717,7 +753,7 @@ function Files({ data, selectedBatchId }: ViewProps) {
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
-        <p className={styles.eyebrow}>Before Stocky access ends</p>
+        <p className={styles.eyebrow}>Before Stocky becomes read-only</p>
         <h3>Preserve the reports that cannot migrate automatically</h3>
         <ul className={styles.guidanceList}>
           <li>Product or custom SKU/variant reports</li>
