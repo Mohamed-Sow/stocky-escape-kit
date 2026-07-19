@@ -1,14 +1,18 @@
 import {
   ExportStatus,
   ExportType,
+  FileParseStatus,
   FindingCategory,
-  StockyReportType,
   SyncStatus,
 } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import db from "../db.server";
 import { toCsv } from "./csv.server";
 import { getExportFilename } from "./export-filenames";
+import {
+  resolveStockySourceCoverage,
+  stockyReportTypeLabel,
+} from "./source-coverage";
 
 type NormalizedPayload = {
   sourceFilename?: string;
@@ -450,7 +454,7 @@ async function buildMigrationChecklistCsv(
       ? { category: { not: FindingCategory.LOCATION_MISMATCH } }
       : {}),
   };
-  const [recordCount, reportTypeRows, batch, findingGroups] = await Promise.all(
+  const [recordCount, sourceFiles, batch, findingGroups] = await Promise.all(
     [
       db.parsedRecord.count({
         where: {
@@ -462,17 +466,15 @@ async function buildMigrationChecklistCsv(
           },
         },
       }),
-      db.parsedRecord.findMany({
+      db.uploadedFile.findMany({
         where: {
-          uploadedFile: {
-            batch: {
-              storeId,
-              id: batchId,
-            },
+          parseStatus: FileParseStatus.PARSED,
+          batch: {
+            storeId,
+            id: batchId,
           },
         },
-        distinct: ["normalizedType"],
-        select: { normalizedType: true },
+        select: { detectedReportType: true, parseStatus: true },
       }),
       db.uploadBatch.findFirst({
         where: { id: batchId, storeId },
@@ -497,9 +499,23 @@ async function buildMigrationChecklistCsv(
     batch?.auditSnapshot?.syncStatus === SyncStatus.SUCCEEDED
       ? batch.auditSnapshot
       : null;
-  const reportTypes = new Set(
-    reportTypeRows.map((record) => record.normalizedType),
+  const sourceCoverage = resolveStockySourceCoverage(
+    sourceFiles.map((file) => ({
+      reportType: file.detectedReportType,
+      status: file.parseStatus,
+    })),
   );
+  const parsedFileCount = sourceFiles.length;
+  const sourceCoverageEvidence = [
+    sourceCoverage.covered.length > 0
+      ? `Core: ${sourceCoverage.covered.map(stockyReportTypeLabel).join(", ")}`
+      : "Core: none",
+    sourceCoverage.supplementalCovered.length > 0
+      ? `Supplemental: ${sourceCoverage.supplementalCovered.map(stockyReportTypeLabel).join(", ")}`
+      : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join("; ");
   const countFindings = ({
     severity,
     category,
@@ -528,24 +544,18 @@ async function buildMigrationChecklistCsv(
     [
       "high",
       "Upload Stocky CSV exports",
-      recordCount > 0 ? "done" : "needed",
-      `${recordCount} parsed rows`,
-      "Preserve product or custom SKU reports, purchase orders, stocktakes, historical cost, and inventory activity CSVs.",
+      parsedFileCount > 0 ? "done" : "needed",
+      `${parsedFileCount} successfully parsed source file${parsedFileCount === 1 ? "" : "s"}, ${recordCount} parsed row${recordCount === 1 ? "" : "s"}`,
+      "Preserve completed purchase orders, stocktake history, and historical costs. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
     ],
     [
       "high",
-      "Confirm source report coverage",
-      [
-        StockyReportType.PRODUCTS,
-        StockyReportType.PURCHASE_ORDERS,
-        StockyReportType.STOCKTAKES,
-        StockyReportType.HISTORICAL_COSTS,
-        StockyReportType.INVENTORY_ACTIVITY,
-      ].every((type) => reportTypes.has(type))
-        ? "done"
+      "Confirm core historical report types",
+      sourceCoverage.coreTypesRepresented
+        ? "manual_review"
         : "needs_attention",
-      [...reportTypes].sort().join(", ") || "No parsed report types",
-      "Return to Stocky and export any missing historical report categories before read-only export access expires.",
+      sourceCoverageEvidence,
+      "Confirm the files cover every completed purchase order, stocktake, and historical-cost date range you intend to retain; report presence alone cannot prove export completeness. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
     ],
     [
       "high",

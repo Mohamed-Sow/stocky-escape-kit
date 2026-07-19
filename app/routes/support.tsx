@@ -32,13 +32,6 @@ export default function Support() {
           </li>
         </ul>
 
-        <h2>App review fixtures</h2>
-        <p>
-          Shopify reviewers can download the fictional ten-file{" "}
-          <a href="/review-fixtures">canonical fixture pack</a>. Upload all ten
-          CSV files together as one migration run.
-        </p>
-
         <h2>Contact support</h2>
         {supportEmail ? (
           <p>

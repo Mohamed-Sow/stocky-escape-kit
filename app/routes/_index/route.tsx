@@ -57,9 +57,13 @@ export default function App() {
               Export before Stocky becomes read-only
             </p>
             <ol>
-              <li>Export product or custom SKU/variant reports.</li>
-              <li>Export historical purchase orders and stocktakes.</li>
-              <li>Export inventory activity and historical cost reports.</li>
+              <li>Export completed purchase order reports.</li>
+              <li>Export stocktake history.</li>
+              <li>Export historical cost reports.</li>
+              <li>
+                Add product, custom SKU, and inventory activity reports when
+                they provide useful supporting evidence.
+              </li>
               <li>Keep every original CSV in a separate safe location.</li>
             </ol>
             <p className={styles.deadlineNote}>

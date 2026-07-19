@@ -24,6 +24,15 @@ export type UploadImportResult = {
   failedFileCount: number;
 };
 
+export function getUploadedFiles(
+  formData: FormData,
+  fieldName = "csvFiles",
+) {
+  return formData
+    .getAll(fieldName)
+    .filter((entry): entry is File => entry instanceof File);
+}
+
 export async function importStockyCsvFiles({
   storeId,
   files,

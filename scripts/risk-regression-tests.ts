@@ -69,7 +69,11 @@ import {
   isValidBillingPlan,
   type PartnerBillingCheck,
 } from "../app/models/billing.server";
-import { importStockyCsvFiles } from "../app/lib/uploads.server";
+import {
+  getUploadedFiles,
+  importStockyCsvFiles,
+} from "../app/lib/uploads.server";
+import { resolveStockySourceCoverage } from "../app/lib/source-coverage";
 import { decodeStockyCsvBytes } from "../app/lib/text-decoding.server";
 import {
   normalizeHeader,
@@ -122,6 +126,28 @@ test("finding result pages remain bounded and reachable", () => {
   assert.equal(resolveFindingsPage("2", 250).skip, 100);
   assert.equal(resolveFindingsPage("99", 250).page, 3);
   assert.equal(resolveFindingsPage("invalid", 250).page, 1);
+});
+
+test("source coverage requires every core successfully parsed Stocky report", () => {
+  const partial = resolveStockySourceCoverage([
+    { reportType: "PRODUCTS", status: "PARSED" },
+    { reportType: "PURCHASE_ORDERS", status: "FAILED" },
+    { reportType: "VENDORS", status: "PARSED" },
+  ]);
+  const complete = resolveStockySourceCoverage(
+    [
+      "PURCHASE_ORDERS",
+      "STOCKTAKES",
+      "HISTORICAL_COSTS",
+    ].map((reportType) => ({ reportType, status: "PARSED" })),
+  );
+
+  assert.equal(partial.coreTypesRepresented, false);
+  assert.deepEqual(partial.covered, []);
+  assert.deepEqual(partial.supplementalCovered, ["PRODUCTS"]);
+  assert.ok(partial.missing.includes("PURCHASE_ORDERS"));
+  assert.equal(complete.coreTypesRepresented, true);
+  assert.equal(complete.covered.length, complete.total);
 });
 
 test("export filenames identify the selected migration run", () => {
@@ -1589,7 +1615,8 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       checklist.body,
       /historical Stocky purchase orders cannot be imported into Shopify/i,
     );
-    assert.match(checklist.body, /Confirm source report coverage/);
+    assert.match(checklist.body, /Confirm core historical report types/);
+    assert.match(checklist.body, /report presence alone cannot prove/i);
     assert.match(checklist.body, /Rebuild supplier records/);
     assert.match(checklist.body, /Set the purchasing cutover/);
     assert.match(checklist.body, /Test Shopify replacement workflows/);
@@ -1766,6 +1793,58 @@ test("header-only Stocky exports remain preserved as successful empty evidence",
       FileParseStatus.PARSED,
     );
     assert.equal(fakeDb.state.uploadedFiles[0]?.rawContentByteLength, 17);
+
+    const checklist = await generateExport({
+      storeId: store.id,
+      batchId: result.batchId,
+      exportType: ExportType.MIGRATION_CHECKLIST,
+      options: { priorityChecklist: true },
+    });
+    assert.match(
+      checklist.body,
+      /Upload Stocky CSV exports,done,"1 successfully parsed source file, 0 parsed rows"/,
+    );
+    assert.match(
+      checklist.body,
+      /Confirm core historical report types,needs_attention,Core: none; Supplemental: products or custom SKUs/,
+    );
+  } finally {
+    fakeDb.restore();
+  }
+});
+
+test("zero-byte CSV uploads remain preserved as failed evidence", async () => {
+  const fakeDb = installInMemoryPrisma();
+  const store = fakeDb.createStore("zero-byte-stocky-dev.myshopify.com");
+
+  try {
+    const formData = new FormData();
+    formData.append(
+      "csvFiles",
+      new File([], "empty.csv", { type: "text/csv" }),
+    );
+    const files = getUploadedFiles(formData);
+
+    assert.equal(files.length, 1);
+    assert.equal(files[0].size, 0);
+
+    const result = await importStockyCsvFiles({
+      storeId: store.id,
+      files,
+    });
+
+    assert.equal(result.importedRowCount, 0);
+    assert.equal(result.failedFileCount, 1);
+    assert.equal(fakeDb.state.uploadedFiles[0]?.rawContentByteLength, 0);
+    assert.equal(fakeDb.state.uploadedFiles[0]?.rawContentBase64, "");
+    assert.equal(
+      fakeDb.state.uploadedFiles[0]?.contentSha256,
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    assert.match(
+      fakeDb.state.uploadedFiles[0]?.errorMessage ?? "",
+      /header row/,
+    );
   } finally {
     fakeDb.restore();
   }
@@ -2189,6 +2268,7 @@ type UploadedFileCreateArgs = {
 
 type UploadedFileFindManyArgs = {
   where?: {
+    parseStatus?: FileParseStatus;
     batch?: {
       id?: string;
       storeId?: string;
@@ -2527,6 +2607,7 @@ function installInMemoryPrisma() {
         );
 
         return (
+          (!where?.parseStatus || file.parseStatus === where.parseStatus) &&
           (!where?.batch?.id || batch?.id === where.batch.id) &&
           (!where?.batch?.storeId || batch?.storeId === where.batch.storeId)
         );

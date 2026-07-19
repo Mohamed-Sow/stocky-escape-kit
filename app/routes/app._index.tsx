@@ -49,7 +49,14 @@ import {
   readFormDataWithinLimit,
 } from "../lib/request-size.server";
 import { resolveFindingsPage, resolveRunHistoryPage } from "../lib/pagination";
-import { importStockyCsvFiles } from "../lib/uploads.server";
+import {
+  resolveStockySourceCoverage,
+  stockyReportTypeLabel,
+} from "../lib/source-coverage";
+import {
+  getUploadedFiles,
+  importStockyCsvFiles,
+} from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
   getActiveBillingName,
@@ -433,11 +440,7 @@ export const action = async ({
   }
 
   if (intent === "upload_csv") {
-    const files = formData
-      .getAll("csvFiles")
-      .filter(
-        (entry): entry is File => entry instanceof File && entry.size > 0,
-      );
+    const files = getUploadedFiles(formData);
 
     if (files.length === 0) {
       return {
@@ -586,6 +589,10 @@ export default function Index() {
 
 function Overview({ data, onViewChange }: ViewProps) {
   const batch = data.selectedBatch;
+  const sourceCoverage = resolveStockySourceCoverage(batch?.files ?? []);
+  const missingSourceLabels = sourceCoverage.missing.map(
+    stockyReportTypeLabel,
+  );
   const totalFindings = Object.values(data.severityCounts).reduce(
     (sum, count) => sum + count,
     0,
@@ -593,10 +600,10 @@ function Overview({ data, onViewChange }: ViewProps) {
   const nextAction = !data.billing.active
     ? {
         eyebrow: "Subscription ended",
-        title: "Download or delete your preserved data",
+        title: "Download your preserved source files",
         detail:
-          "Stored evidence remains readable. Reactivate to upload, sync, or generate new reports.",
-        view: "settings" as const,
+          "Original CSV files and findings remain readable. Use Settings if you want to delete the stored migration data.",
+        view: "files" as const,
       }
     : !batch
       ? {
@@ -606,37 +613,44 @@ function Overview({ data, onViewChange }: ViewProps) {
             "Stage all related files and submit them as one migration run.",
           view: "files" as const,
         }
-      : !data.latestSnapshot || data.latestSnapshot.status !== "SUCCEEDED"
+      : !sourceCoverage.coreTypesRepresented
         ? {
-            eyebrow: "Next action",
-            title: "Sync the Shopify catalog",
-            detail:
-              "Build a complete, read-only product and location snapshot before matching this run.",
+            eyebrow: "Core report types needed",
+            title: "Add the missing historical reports",
+            detail: `Create one complete run that also includes ${missingSourceLabels.join(", ")}. Product, custom SKU, and inventory activity reports are supplemental evidence.`,
             view: "files" as const,
           }
-        : data.severityCounts.CRITICAL > 0
+        : !data.latestSnapshot || data.latestSnapshot.status !== "SUCCEEDED"
           ? {
-              eyebrow: "Critical next action",
-              title: "Review critical findings",
+              eyebrow: "Next action",
+              title: "Sync the Shopify catalog",
               detail:
-                "Resolve identity and matching gaps before relying on the export kit.",
-              view: "findings" as const,
+                "Build a complete, read-only product and location snapshot before matching this run.",
+              view: "files" as const,
             }
-          : totalFindings > 0
+          : data.severityCounts.CRITICAL > 0
             ? {
-                eyebrow: "Review next",
-                title: "Review the remaining warnings and evidence",
+                eyebrow: "Critical next action",
+                title: "Review critical findings",
                 detail:
-                  "No critical blockers remain. Confirm the non-blocking issues before handoff.",
+                  "Resolve identity and matching gaps before relying on the export kit.",
                 view: "findings" as const,
               }
-            : {
-                eyebrow: "Run ready",
-                title: "Download the migration record",
-                detail:
-                  "The current audit has no findings. Preserve the reports and source checksums for handoff.",
-                view: "exports" as const,
-              };
+            : totalFindings > 0
+              ? {
+                  eyebrow: "Review next",
+                  title: "Review the remaining warnings and evidence",
+                  detail:
+                    "No critical blockers remain. Confirm the non-blocking issues before handoff.",
+                  view: "findings" as const,
+                }
+              : {
+                  eyebrow: "Run ready",
+                  title: "Download the migration record",
+                  detail:
+                    "The current audit has no findings. Preserve the reports and source checksums for handoff.",
+                  view: "exports" as const,
+                };
 
   return (
     <div className={styles.stack}>
@@ -716,6 +730,13 @@ function Overview({ data, onViewChange }: ViewProps) {
               <div>
                 <dt>Warnings</dt>
                 <dd>{batch.warningCount}</dd>
+              </div>
+              <div>
+                <dt>Core report types</dt>
+                <dd>
+                  {sourceCoverage.covered.length} of {sourceCoverage.total}{" "}
+                  report types
+                </dd>
               </div>
             </dl>
           ) : (
@@ -809,18 +830,25 @@ function Overview({ data, onViewChange }: ViewProps) {
 
 function Files({ data, selectedBatchId }: ViewProps) {
   const navigate = useNavigate();
+  const sourceCoverage = resolveStockySourceCoverage(
+    data.selectedBatch?.files ?? [],
+  );
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
         <p className={styles.eyebrow}>Before Stocky becomes read-only</p>
-        <h3>Preserve the reports that cannot migrate automatically</h3>
+        <h3>Preserve the Stocky history that will not migrate automatically</h3>
         <ul className={styles.guidanceList}>
-          <li>Product or custom SKU/variant reports</li>
-          <li>Historical purchase orders and stocktakes</li>
-          <li>Inventory activity and historical cost reports</li>
+          <li>Completed purchase order reports</li>
+          <li>Stocktake history</li>
+          <li>Historical cost reports</li>
           <li>
-            Supplier evidence from purchase orders or custom SKU reports; Stocky
-            supplier records cannot be exported directly
+            Helpful supplemental evidence when available: product or custom SKU
+            reports and inventory activity
+          </li>
+          <li>
+            Supplier evidence from purchase orders or custom SKU reports;
+            Stocky supplier records cannot be exported directly
           </li>
         </ul>
         <p>
@@ -839,6 +867,22 @@ function Files({ data, selectedBatchId }: ViewProps) {
           catalogs stop before findings are generated so partial results cannot
           look complete; contact support before relying on this app for one.
         </p>
+        {data.selectedBatch ? (
+          <p className={styles.inlineNotice}>
+            <strong>Selected run core report types:</strong>{" "}
+            {sourceCoverage.covered.length} of {sourceCoverage.total} report
+            types.
+            {sourceCoverage.coreTypesRepresented
+              ? " Completed purchase orders, stocktakes, and historical costs are represented."
+              : ` Still needed in one complete run: ${sourceCoverage.missing.map(stockyReportTypeLabel).join(", ")}.`}
+            {sourceCoverage.supplementalCovered.length > 0
+              ? ` Supplemental evidence included: ${sourceCoverage.supplementalCovered.map(stockyReportTypeLabel).join(", ")}.`
+              : ""}
+            {!sourceCoverage.coreTypesRepresented
+              ? " A header-only CSV still counts when Stocky returns no rows; a blank file does not."
+              : " Report presence does not prove that every date range or record was exported."}
+          </p>
+        ) : null}
       </section>
       {data.latestSyncAttempt?.status === "FAILED" ? (
         <div className={styles.errorNotice} role="alert">
@@ -1563,6 +1607,23 @@ function Settings({ data }: { data: LoaderData }) {
           The app uses read-only Shopify GraphQL access and never imports
           historical Stocky purchase orders into Shopify.
         </p>
+      </section>
+      <section className={styles.panel}>
+        <p className={styles.eyebrow}>Support</p>
+        <h3>Get help with a migration run</h3>
+        <p>
+          Keep the original CSV and note the run date and affected filename.
+          Never send passwords, Shopify access tokens, or other credentials.
+        </p>
+        <a
+          className={styles.secondaryButton}
+          href="/support"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Open support guide in a new tab"
+        >
+          Open support guide
+        </a>
       </section>
       <section className={`${styles.panel} ${styles.dangerPanel}`}>
         <p className={styles.eyebrow}>Destructive control</p>
