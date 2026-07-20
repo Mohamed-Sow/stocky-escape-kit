@@ -228,11 +228,7 @@ export async function regenerateAuditFindings({
         });
       }
 
-      if (
-        normalized.supplier ||
-        normalized.vendor ||
-        normalized.supplierSku
-      ) {
+      if (normalized.supplier || normalized.vendor || normalized.supplierSku) {
         const supplier = normalized.supplier?.trim() || null;
         const vendor = normalized.vendor?.trim() || null;
         const supplierSku = normalized.supplierSku?.trim() || null;
@@ -290,7 +286,10 @@ export async function regenerateAuditFindings({
 
         purchaseOrder.statuses.add(normalized.status?.trim() || "unknown");
         purchaseOrder.lineCount += 1;
-        if (quantityResolution.quantity === null || (!sku && !normalized.barcode)) {
+        if (
+          quantityResolution.quantity === null ||
+          (!sku && !normalized.barcode)
+        ) {
           purchaseOrder.manualReviewLineCount += 1;
         } else {
           purchaseOrder.importReadyLineCount += 1;
@@ -307,8 +306,7 @@ export async function regenerateAuditFindings({
             quantity: normalized.quantity?.trim() || null,
             quantityOrdered: normalized.quantityOrdered?.trim() || null,
             quantityReceived: normalized.quantityReceived?.trim() || null,
-            quantityOutstanding:
-              normalized.quantityOutstanding?.trim() || null,
+            quantityOutstanding: normalized.quantityOutstanding?.trim() || null,
             shopifyImportQuantity: quantityResolution.quantity,
             quantityBasis: quantityResolution.basis,
             supplierSku: normalized.supplierSku?.trim() || null,
@@ -754,6 +752,12 @@ function parserWarningCopy(warning: string) {
         title: "Tax values could not be interpreted",
         recommendedAction:
           "Correct or confirm the affected Stocky tax percentages before using an open purchase-order import file.",
+      };
+    case "ambiguous_tax":
+      return {
+        title: "Tax column needs interpretation",
+        recommendedAction:
+          "Confirm whether the Stocky Tax column is an amount or a percentage. It is deliberately left blank in Shopify purchase-order import files unless the source header explicitly identifies a tax rate or percentage.",
       };
     default:
       return {

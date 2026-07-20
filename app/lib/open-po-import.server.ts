@@ -8,6 +8,7 @@ import { toCsv } from "./csv.server";
 import { getOpenPurchaseOrderImportFilename } from "./export-filenames";
 import { safeDownloadFilename } from "./filenames.server";
 import {
+  findDuplicatePurchaseOrderLineIndexes,
   isOpenPurchaseOrderStatus,
   recoverOpenPurchaseOrderEvidence,
   resolveOpenPurchaseOrderQuantity,
@@ -141,8 +142,7 @@ export async function generateOpenPurchaseOrderImportPackage({
       sourceQuantity: normalized.quantity?.trim() ?? "",
       sourceQuantityOrdered: normalized.quantityOrdered?.trim() ?? "",
       sourceQuantityReceived: normalized.quantityReceived?.trim() ?? "",
-      sourceQuantityOutstanding:
-        normalized.quantityOutstanding?.trim() ?? "",
+      sourceQuantityOutstanding: normalized.quantityOutstanding?.trim() ?? "",
     };
 
     if (!reference) {
@@ -182,16 +182,14 @@ export async function generateOpenPurchaseOrderImportPackage({
 
   const entries: Record<string, Uint8Array> = {};
   const readyGroups = groupByReference(prepared);
-  const summaries: string[][] = [];
   const usedImportFilenames = new Set<string>();
+  const readyLineCounts = new Map<string, number>();
   let readyLineCount = 0;
 
   for (const [reference, lines] of readyGroups) {
-    const duplicateIdentifiers = duplicateVariantIdentifiers(lines);
-    const safeLines = lines.filter((line) => {
-      const identifier = variantIdentifier(line);
-
-      if (!duplicateIdentifiers.has(identifier)) {
+    const duplicateLineIndexes = findDuplicatePurchaseOrderLineIndexes(lines);
+    const safeLines = lines.filter((line, index) => {
+      if (!duplicateLineIndexes.has(index)) {
         return true;
       }
 
@@ -205,14 +203,6 @@ export async function generateOpenPurchaseOrderImportPackage({
     });
 
     if (safeLines.length === 0) {
-      summaries.push([
-        reference,
-        uniqueEvidence(lines.map((line) => line.supplierEvidence)),
-        uniqueEvidence(lines.map((line) => line.status)),
-        "0",
-        String(lines.length),
-        "manual review required",
-      ]);
       continue;
     }
 
@@ -234,15 +224,34 @@ export async function generateOpenPurchaseOrderImportPackage({
       ]),
     );
     readyLineCount += safeLines.length;
-    summaries.push([
+    readyLineCounts.set(reference, safeLines.length);
+  }
+
+  const summaryGroups = groupByReference(
+    [...prepared, ...excluded].filter((line) => line.reference),
+  );
+  const excludedGroups = groupByReference(
+    excluded.filter((line) => line.reference),
+  );
+  const summaries = [...summaryGroups.entries()].map(([reference, lines]) => {
+    const importRows = readyLineCounts.get(reference) ?? 0;
+    const manualReviewRows = excludedGroups.get(reference)?.length ?? 0;
+    const nextAction =
+      importRows > 0 && manualReviewRows > 0
+        ? "verify the import rows and resolve every manual-review row before marking the Shopify purchase order as ordered"
+        : importRows > 0
+          ? "verify before importing into a Shopify draft purchase order"
+          : "manual review required before recreating this purchase order";
+
+    return [
       reference,
       uniqueEvidence(lines.map((line) => line.supplierEvidence)),
       uniqueEvidence(lines.map((line) => line.status)),
-      String(safeLines.length),
-      String(lines.length - safeLines.length),
-      "verify before importing into a Shopify draft purchase order",
-    ]);
-  }
+      String(importRows),
+      String(manualReviewRows),
+      nextAction,
+    ];
+  });
 
   entries["purchase-order-summary.csv"] = strToU8(
     toCsv([
@@ -257,9 +266,7 @@ export async function generateOpenPurchaseOrderImportPackage({
       ...summaries,
     ]),
   );
-  entries["manual-review-lines.csv"] = strToU8(
-    buildExcludedLinesCsv(excluded),
-  );
+  entries["manual-review-lines.csv"] = strToU8(buildExcludedLinesCsv(excluded));
   entries["README.txt"] = strToU8(buildReadme());
 
   const manifest = {
@@ -299,6 +306,7 @@ async function* iteratePurchaseOrderRecords(
   while (true) {
     const records: PurchaseOrderRecord[] = await db.parsedRecord.findMany({
       where: {
+        normalizedType: StockyReportType.PURCHASE_ORDERS,
         uploadedFile: { batch: { storeId, id: batchId } },
       },
       orderBy: [
@@ -311,11 +319,7 @@ async function* iteratePurchaseOrderRecords(
       select: RECORD_SELECT,
     });
 
-    for (const record of records) {
-      if (record.normalizedType === StockyReportType.PURCHASE_ORDERS) {
-        yield record;
-      }
-    }
+    yield* records;
 
     if (records.length < PAGE_SIZE) {
       return;
@@ -365,38 +369,17 @@ function buildExcludedLinesCsv(lines: ExcludedLine[]) {
 }
 
 function buildReadme() {
-  return `STOCKY OPEN PURCHASE-ORDER HANDOFF\n\nThe shopify-import folder contains one CSV per Stocky purchase order. Each CSV uses Shopify's current official line-item import headers:\nSKU, Barcode, Supplier SKU, Quantity, Cost, Tax\n\nUse each file separately:\n1. In Shopify admin, go to Products > Purchase orders and create a draft purchase order.\n2. Select or create the supplier and choose the destination location.\n3. Import the matching CSV from shopify-import.\n4. Compare every line with the preserved Stocky source and manual-review-lines.csv.\n5. Confirm remaining quantities, costs, tax percentages, supplier currency, and destination before marking the purchase order as ordered.\n\nSafety rules:\n- These files recreate open work only. They do not import historical Stocky purchase orders as history.\n- Partial, in-transit, duplicate, unidentified, or non-positive lines are withheld when a safe remaining quantity cannot be derived.\n- A source quantity copied from an open or not-received line still requires merchant verification.\n- Shopify rejects duplicate variants already present on a purchase order; duplicate Stocky lines are withheld for manual consolidation.\n\nOfficial Shopify instructions:\nhttps://help.shopify.com/en/manual/products/inventory/purchase-orders/creating-purchase-orders\n`;
+  return `STOCKY OPEN PURCHASE-ORDER HANDOFF\n\nThe shopify-import folder contains one CSV per Stocky purchase order. Each CSV uses Shopify's current official line-item import headers:\nSKU, Barcode, Supplier SKU, Quantity, Cost, Tax\n\nUse each file separately:\n1. In Shopify admin, go to Products > Purchase orders and create a draft purchase order.\n2. Select or create the supplier and choose the destination location.\n3. Import the matching CSV from shopify-import.\n4. Compare every line with the preserved Stocky source and manual-review-lines.csv.\n5. Confirm remaining quantities, costs, tax percentages, supplier currency, and destination before marking the purchase order as ordered.\n\nSafety rules:\n- These files recreate open work only. They do not import historical Stocky purchase orders as history.\n- Closed, completed, canceled, voided, rejected, and fully received purchase orders are excluded.\n- Partial or in-transit lines are withheld when a safe remaining quantity cannot be derived. Duplicate, unidentified, and non-positive lines are also withheld for manual review.\n- A generic Stocky Tax column is not assumed to be a percentage; only explicitly labeled tax-rate or tax-percentage evidence is carried into an import file.\n- A source quantity copied from an open or not-received line still requires merchant verification.\n- Shopify rejects duplicate variants already present on a purchase order; duplicate Stocky lines are withheld for manual consolidation.\n\nOfficial Shopify instructions:\nhttps://help.shopify.com/en/manual/products/inventory/purchase-orders/creating-purchase-orders\n`;
 }
 
-function groupByReference(lines: PreparedLine[]) {
-  const groups = new Map<string, PreparedLine[]>();
+function groupByReference<T extends { reference: string }>(lines: T[]) {
+  const groups = new Map<string, T[]>();
 
   for (const line of lines) {
     groups.set(line.reference, [...(groups.get(line.reference) ?? []), line]);
   }
 
   return groups;
-}
-
-function duplicateVariantIdentifiers(lines: PreparedLine[]) {
-  const counts = new Map<string, number>();
-
-  for (const line of lines) {
-    const identifier = variantIdentifier(line);
-    counts.set(identifier, (counts.get(identifier) ?? 0) + 1);
-  }
-
-  return new Set(
-    [...counts.entries()]
-      .filter(([, count]) => count > 1)
-      .map(([identifier]) => identifier),
-  );
-}
-
-function variantIdentifier(line: PreparedLine) {
-  return line.sku
-    ? `sku:${line.sku.toLowerCase()}`
-    : `barcode:${line.barcode.toLowerCase()}`;
 }
 
 function safeOptionalDecimal(
@@ -424,7 +407,10 @@ function uniqueReferenceFilename(reference: string, used: Set<string>) {
   let normalized = candidate.toLowerCase();
 
   if (used.has(normalized)) {
-    const suffix = createHash("sha256").update(reference).digest("hex").slice(0, 8);
+    const suffix = createHash("sha256")
+      .update(reference)
+      .digest("hex")
+      .slice(0, 8);
     candidate = `${base.slice(0, 111)}-${suffix}`;
     normalized = candidate.toLowerCase();
   }

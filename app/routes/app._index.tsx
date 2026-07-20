@@ -840,8 +840,9 @@ function Overview({ data, onViewChange }: ViewProps) {
             then receive and close everything possible.
           </li>
           <li>
-            Recreate only remaining quantities from any in-flight order in
-            Shopify; historical purchase orders cannot be imported.
+            Use the Open PO files in Exports to recreate only verified remaining
+            quantities from in-flight orders as Shopify draft line items;
+            historical purchase orders cannot be imported as history.
           </li>
           <li>
             Test a Shopify purchase order, transfer, and inventory adjustment,
@@ -947,7 +948,8 @@ function Files({ data, selectedBatchId }: ViewProps) {
           <li>Historical stock-on-hand or cost reports</li>
           <li>
             Helpful supplemental evidence when available: product or custom SKU
-            reports and inventory activity
+            reports, vendor or supplier-reference reports, and inventory
+            activity
           </li>
           <li>
             Supplier evidence from purchase orders or custom SKU reports; Stocky
@@ -1546,8 +1548,8 @@ function Exports({ data, selectedBatchId }: ViewProps) {
             <h3>Download the complete migration package</h3>
             <p>
               One ZIP with every preserved original CSV, all four generated
-              reports, open purchase-order import files, and a SHA-256
-              checksum manifest.
+              reports, open purchase-order import files, and a SHA-256 checksum
+              manifest.
             </p>
           </div>
           {selectedBatchId && migrationPackageAvailable ? (
@@ -1573,9 +1575,10 @@ function Exports({ data, selectedBatchId }: ViewProps) {
             <p className={styles.eyebrow}>Open purchase orders</p>
             <h3>Move remaining Stocky order lines into Shopify drafts</h3>
             <p>
-              Download one official-format Shopify import CSV per Stocky PO.
-              Partial, duplicate, unidentified, and unsafe-quantity lines are
-              withheld in a separate manual-review report.
+              Download one official-format Shopify import CSV per open Stocky
+              PO. Closed work is excluded. Partial, duplicate, unidentified, and
+              unsafe-quantity lines are withheld in a separate manual-review
+              report.
             </p>
           </div>
           {selectedBatchId && migrationPackageAvailable ? (
@@ -1593,7 +1596,9 @@ function Exports({ data, selectedBatchId }: ViewProps) {
           These files recreate open work only. They do not import historical
           Stocky purchase orders as Shopify history. Verify supplier,
           destination, remaining quantity, cost, tax, and currency before
-          marking any Shopify purchase order as ordered.
+          marking any Shopify purchase order as ordered. Generic Stocky Tax
+          columns are left blank unless the source explicitly identifies a tax
+          rate or percentage.
         </p>
       </section>
       <section className={styles.exportGrid}>

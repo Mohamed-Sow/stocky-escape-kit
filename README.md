@@ -32,11 +32,13 @@ This app should not become full inventory management software in v1.
 - The migration checklist verifies that Shopify's core historical report types—completed purchase orders, stocktake history, and historical stock-on-hand or cost reports—are represented, while treating product, custom SKU, and inventory activity reports as supplemental evidence. It explicitly warns that file presence cannot prove every intended date range or record was exported. The checklist also includes the operational cutover work Shopify cannot infer from read-only data: closing or recreating in-flight quantities, testing replacement Shopify workflows, training staff, removing the Stocky POS tile, and updating Stocky-dependent integrations.
 - Open Stocky purchase orders produce a fail-closed handoff ZIP. Each safely
   identified purchase order gets its own CSV using Shopify's official `SKU,
-  Barcode, Supplier SKU, Quantity, Cost, Tax` import template. Partial,
+Barcode, Supplier SKU, Quantity, Cost, Tax` import template. Partial,
   in-transit, duplicate, unidentified, or ambiguous-quantity lines are kept
-  out of import files and listed in `manual-review-lines.csv`. These files
-  create draft line items only; they do not import historical Stocky purchase
-  orders as Shopify history.
+  out of import files and listed in `manual-review-lines.csv`; closed,
+  completed, canceled, voided, rejected, and fully received orders are
+  excluded. A generic Stocky `Tax` column is never assumed to be Shopify's tax
+  percentage. These files create draft line items only; they do not import
+  historical Stocky purchase orders as Shopify history.
 - A transient Partner API failure uses the last verified active billing state for at most 24 hours. A successful no-subscription response cancels access immediately; an outage cannot grant indefinite paid access.
 - A canceled subscription remains read-only so the merchant can retrieve or delete existing evidence. Delivery of Shopify's `APP_UNINSTALLED` webhook deletes the store and all cascaded migration data.
 

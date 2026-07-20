@@ -59,6 +59,10 @@ export default function App() {
             </p>
             <ol>
               <li>Export completed purchase order reports.</li>
+              <li>
+                Export open purchase orders so remaining work can be reviewed
+                and recreated safely.
+              </li>
               <li>Export stocktake history.</li>
               <li>Export historical stock-on-hand or cost reports.</li>
               <li>
@@ -99,8 +103,9 @@ export default function App() {
           <article>
             <h3>Hand off actionable work</h3>
             <p>
-              Export every audit finding, supplier evidence, and a checklist
-              that separates blockers from manual follow-up.
+              Export every audit finding, supplier evidence, a cutover
+              checklist, and Shopify-format draft line-item files for open
+              purchase orders that can be derived safely.
             </p>
           </article>
         </div>
@@ -108,18 +113,27 @@ export default function App() {
 
       <section className={styles.truthPanel}>
         <div>
-          <p className={styles.eyebrow}>Important boundary</p>
-          <h2>Supplier records need reconstruction</h2>
+          <p className={styles.eyebrow}>Important boundaries</p>
+          <h2>Know what can—and cannot—move</h2>
         </div>
-        <p>
-          Shopify&apos;s transition guidance says suppliers cannot be exported
-          directly from Stocky. Preserve supplier clues from purchase orders and
-          custom SKU reports, then recreate the records manually.{" "}
-          <a href="https://help.shopify.com/en/manual/products/inventory/transitioning-from-stocky">
-            Read Shopify&apos;s transition guidance
-          </a>
-          .
-        </p>
+        <div className={styles.truthCopy}>
+          <p>
+            <strong>Supplier records need reconstruction.</strong>{" "}
+            Shopify&apos;s transition guidance says suppliers cannot be exported
+            directly from Stocky. Preserve supplier clues from purchase orders
+            and custom SKU reports, then recreate the records manually.{" "}
+            <a href="https://help.shopify.com/en/manual/products/inventory/transitioning-from-stocky">
+              Read Shopify&apos;s transition guidance
+            </a>
+            .
+          </p>
+          <p>
+            <strong>Open work is not historical history.</strong> Open Stocky
+            purchase-order rows can be packaged into Shopify&apos;s current
+            draft line-item CSV format when identity and remaining quantity are
+            safe. Ambiguous or duplicate rows are withheld for manual review.
+          </p>
+        </div>
       </section>
 
       <footer className={styles.footer}>

@@ -62,12 +62,7 @@ const FIELD_ALIASES = {
   ],
   shopifyId: ["shopify_id", "shopify_product_id", "shopify_variant_id"],
   vendor: ["vendor", "vendor_name", "brand", "product_vendor"],
-  supplier: [
-    "supplier",
-    "supplier_name",
-    "supplier_code",
-    "vendor_code",
-  ],
+  supplier: ["supplier", "supplier_name", "supplier_code", "vendor_code"],
   location: [
     "location",
     "location_name",
@@ -97,12 +92,7 @@ const FIELD_ALIASES = {
     "extended_price",
     "line_total",
   ],
-  retailValue: [
-    "retail_price",
-    "retail_value",
-    "total_retail",
-    "stock_value",
-  ],
+  retailValue: ["retail_price", "retail_value", "total_retail", "stock_value"],
   adjustmentCost: [
     "adjustment_cost",
     "adjustment_total_cost",
@@ -152,7 +142,7 @@ const FIELD_ALIASES = {
     "qty_unreceived",
     "backordered_quantity",
   ],
-  taxRate: ["tax", "tax_rate", "tax_percent", "tax_percentage"],
+  taxRate: ["tax_rate", "tax_percent", "tax_percentage"],
   status: [
     "status",
     "line_status",
@@ -215,7 +205,9 @@ export function parseStockyCsv({
 
   const reportType = detectReportType(filename, normalizedHeaders);
   const unknownColumns = csv.headers.filter(
-    (header) => !KNOWN_COLUMNS.has(normalizeHeader(header)),
+    (header) =>
+      !KNOWN_COLUMNS.has(normalizeHeader(header)) &&
+      !isExplicitTaxRateHeader(header),
   );
   const duplicateHeaders = findDuplicateHeaders(csv.headers);
   const metadata: Prisma.InputJsonObject = {
@@ -267,6 +259,10 @@ export function parseStockyCsv({
 
     if (normalized.taxRate && parseStockyDecimal(normalized.taxRate) === null) {
       warnings.push("invalid_tax");
+    }
+
+    if (ambiguousTaxValue(raw, headerColumns)) {
+      warnings.push("ambiguous_tax");
     }
 
     if (normalized.date && !isPlausibleDate(normalized.date)) {
@@ -329,8 +325,7 @@ function detectReportType(filename: string, headers: string[]) {
     headerSet.has(alias),
   );
   const hasHistoricalFilename =
-    normalizedName.includes("historical") ||
-    normalizedName.includes("history");
+    normalizedName.includes("historical") || normalizedName.includes("history");
 
   if (
     name.includes("purchase") ||
@@ -421,11 +416,7 @@ function extractNormalizedFields(
     cost: valueFor(raw, headerColumns, FIELD_ALIASES.cost),
     totalCost: valueFor(raw, headerColumns, FIELD_ALIASES.totalCost),
     retailValue: valueFor(raw, headerColumns, FIELD_ALIASES.retailValue),
-    adjustmentCost: valueFor(
-      raw,
-      headerColumns,
-      FIELD_ALIASES.adjustmentCost,
-    ),
+    adjustmentCost: valueFor(raw, headerColumns, FIELD_ALIASES.adjustmentCost),
     quantity: valueFor(raw, headerColumns, FIELD_ALIASES.quantity),
     quantityOrdered: valueFor(
       raw,
@@ -442,7 +433,9 @@ function extractNormalizedFields(
       headerColumns,
       FIELD_ALIASES.quantityOutstanding,
     ),
-    taxRate: valueFor(raw, headerColumns, FIELD_ALIASES.taxRate),
+    taxRate:
+      valueFor(raw, headerColumns, FIELD_ALIASES.taxRate) ??
+      explicitTaxRateValue(raw, headerColumns),
     status: valueFor(raw, headerColumns, FIELD_ALIASES.status),
     date: valueFor(raw, headerColumns, FIELD_ALIASES.date),
     reference: valueFor(raw, headerColumns, FIELD_ALIASES.reference),
@@ -469,6 +462,39 @@ function valueFor(
   }
 
   return null;
+}
+
+function explicitTaxRateValue(
+  raw: Record<string, string>,
+  headerColumns: HeaderColumn[],
+) {
+  const column = headerColumns.find(
+    (candidate) =>
+      candidate.normalized === "tax" &&
+      isExplicitTaxRateHeader(candidate.original) &&
+      raw[candidate.rawKey]?.trim(),
+  );
+
+  return column ? raw[column.rawKey].trim() : null;
+}
+
+function ambiguousTaxValue(
+  raw: Record<string, string>,
+  headerColumns: HeaderColumn[],
+) {
+  const column = headerColumns.find(
+    (candidate) =>
+      candidate.normalized === "tax" &&
+      !isExplicitTaxRateHeader(candidate.original) &&
+      raw[candidate.rawKey]?.trim(),
+  );
+
+  return column ? raw[column.rawKey].trim() : null;
+}
+
+function isExplicitTaxRateHeader(header: string) {
+  const value = header.trim().toLowerCase();
+  return value.includes("%") || /\b(?:rate|percent|percentage)\b/.test(value);
 }
 
 type HeaderColumn = {

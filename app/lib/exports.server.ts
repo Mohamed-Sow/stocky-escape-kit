@@ -433,7 +433,9 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
             row.date,
             row.supplier
               ? "Use as evidence when recreating suppliers in Shopify. Supplier records cannot be exported directly from Stocky."
-              : "Vendor-only lead: confirm against purchase orders or custom SKU reports before recreating a supplier.",
+              : row.vendor
+                ? "Vendor-only lead: confirm against purchase orders or custom SKU reports before recreating a supplier."
+                : "Supplier SKU evidence: use it only as the optional supplier SKU for a product line, and confirm the supplier business separately.",
           ]),
         ),
       );
@@ -458,47 +460,45 @@ async function buildMigrationChecklistCsv(
       ? { category: { not: FindingCategory.LOCATION_MISMATCH } }
       : {}),
   };
-  const [recordCount, sourceFiles, batch, findingGroups] = await Promise.all(
-    [
-      db.parsedRecord.count({
-        where: {
-          uploadedFile: {
-            batch: {
-              storeId,
-              id: batchId,
-            },
-          },
-        },
-      }),
-      db.uploadedFile.findMany({
-        where: {
-          parseStatus: FileParseStatus.PARSED,
+  const [recordCount, sourceFiles, batch, findingGroups] = await Promise.all([
+    db.parsedRecord.count({
+      where: {
+        uploadedFile: {
           batch: {
             storeId,
             id: batchId,
           },
         },
-        select: { detectedReportType: true, parseStatus: true },
-      }),
-      db.uploadBatch.findFirst({
-        where: { id: batchId, storeId },
-        include: {
-          auditSnapshot: {
-            select: {
-              syncStatus: true,
-              variantCount: true,
-              locationCount: true,
-            },
+      },
+    }),
+    db.uploadedFile.findMany({
+      where: {
+        parseStatus: FileParseStatus.PARSED,
+        batch: {
+          storeId,
+          id: batchId,
+        },
+      },
+      select: { detectedReportType: true, parseStatus: true },
+    }),
+    db.uploadBatch.findFirst({
+      where: { id: batchId, storeId },
+      include: {
+        auditSnapshot: {
+          select: {
+            syncStatus: true,
+            variantCount: true,
+            locationCount: true,
           },
         },
-      }),
-      db.auditFinding.groupBy({
-        by: ["severity", "category"],
-        where: findingWhere,
-        _count: { _all: true },
-      }),
-    ],
-  );
+      },
+    }),
+    db.auditFinding.groupBy({
+      by: ["severity", "category"],
+      where: findingWhere,
+      _count: { _all: true },
+    }),
+  ]);
   const latestSnapshot =
     batch?.auditSnapshot?.syncStatus === SyncStatus.SUCCEEDED
       ? batch.auditSnapshot
@@ -550,16 +550,14 @@ async function buildMigrationChecklistCsv(
       "Upload Stocky CSV exports",
       parsedFileCount > 0 ? "done" : "needed",
       `${parsedFileCount} successfully parsed source file${parsedFileCount === 1 ? "" : "s"}, ${recordCount} parsed row${recordCount === 1 ? "" : "s"}`,
-      "Preserve completed purchase orders, stocktake history, and historical stock-on-hand or cost reports. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
+      "Preserve completed and open purchase order reports, stocktake history, and historical stock-on-hand or cost reports. Add product, custom SKU, vendor or supplier-reference, and inventory activity reports when they provide useful supporting evidence.",
     ],
     [
       "high",
       "Confirm core historical report types",
-      sourceCoverage.coreTypesRepresented
-        ? "manual_review"
-        : "needs_attention",
+      sourceCoverage.coreTypesRepresented ? "manual_review" : "needs_attention",
       sourceCoverageEvidence,
-      "Confirm the files cover every completed purchase order, stocktake, and historical-cost date range you intend to retain; report presence alone cannot prove export completeness. Add product, custom SKU, and inventory activity reports when they provide useful supporting evidence.",
+      "Confirm the files cover every completed and open purchase order, stocktake, and historical-cost date range you intend to retain; report presence alone cannot prove export completeness. Add product, custom SKU, vendor or supplier-reference, and inventory activity reports when they provide useful supporting evidence.",
     ],
     [
       "high",
@@ -589,7 +587,7 @@ async function buildMigrationChecklistCsv(
       "Review open Stocky purchase orders",
       openPoCount === 0 ? "ready" : "manual_review",
       `${openPoCount} open purchase order indicators`,
-      "Receive and close each order before cutover when possible. If one remains open, recreate only its remaining quantities in Shopify; historical Stocky purchase orders cannot be imported into Shopify.",
+      "Receive and close each order before cutover when possible. For work that remains open, use the Open PO import files in Exports to create Shopify draft line items, resolve every manual-review row, and verify supplier, destination, remaining quantity, cost, tax, and currency before marking the order as ordered. Historical Stocky purchase orders cannot be imported as Shopify history.",
     ],
     [
       "medium",

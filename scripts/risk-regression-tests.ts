@@ -85,8 +85,13 @@ import {
   parseStockyCsv,
   reportRequiresSku,
 } from "../app/lib/stocky-parser.server";
-import { parseStockyDecimal, parseStockyInteger } from "../app/lib/stocky-numbers";
 import {
+  parseStockyDecimal,
+  parseStockyInteger,
+} from "../app/lib/stocky-numbers";
+import {
+  findDuplicatePurchaseOrderLineIndexes,
+  isOpenPurchaseOrderStatus,
   recoverOpenPurchaseOrderEvidence,
   resolveOpenPurchaseOrderQuantity,
 } from "../app/lib/open-purchase-orders";
@@ -169,7 +174,11 @@ test("merchant-facing workflow labels stay truthful and task-oriented", () => {
   assert.doesNotMatch(dashboardRoute, /label="Rows imported"/);
   assert.match(dashboardRoute, /Download the complete migration package/);
   assert.match(dashboardRoute, /Download open PO files/);
-  assert.match(dashboardRoute, /official-format Shopify import CSV per Stocky PO/);
+  assert.match(
+    dashboardRoute,
+    /official-format Shopify import CSV per open Stocky\s+PO/,
+  );
+  assert.match(dashboardRoute, /Generic Stocky Tax\s+columns are left blank/);
   assert.doesNotMatch(dashboardRoute, /Download the complete review kit/);
   assert.match(dashboardRoute, /Before August 31, 2026/);
   assert.match(dashboardRoute, /role="note"/);
@@ -398,6 +407,20 @@ test("Stocky parser flags malformed cost, quantity, and date evidence", () => {
   ]);
 });
 
+test("Stocky parser does not treat an unlabeled Tax column as a percentage", () => {
+  const parsed = parseStockyCsv({
+    filename: "open-purchase-orders.csv",
+    content: "PO Number,Status,SKU,Qty Ordered,Tax\nPO-1,Open,SKU-1,4,12.50",
+  });
+  const normalized = parsed.records[0].normalizedPayload.normalized as {
+    taxRate?: string | null;
+  };
+
+  assert.equal(normalized.taxRate, null);
+  assert.ok(parsed.unknownColumns.includes("Tax"));
+  assert.ok(parsed.records[0].warnings.includes("ambiguous_tax"));
+});
+
 test("Stocky numeric normalization fails closed on ambiguous money and resolves whole quantities", () => {
   assert.equal(parseStockyDecimal("12,50"), 12.5);
   assert.equal(parseStockyDecimal("1.234,56"), 1234.56);
@@ -436,6 +459,34 @@ test("open purchase-order quantities never guess a partial remaining balance", (
   );
 });
 
+test("closed purchase-order statuses never enter the open-work handoff", () => {
+  assert.equal(isOpenPurchaseOrderStatus("Partially Received"), true);
+  assert.equal(isOpenPurchaseOrderStatus("Received in Part"), true);
+  assert.equal(
+    isOpenPurchaseOrderStatus("Partially Received and Closed"),
+    false,
+  );
+  assert.equal(isOpenPurchaseOrderStatus("Fully Received"), false);
+  assert.equal(isOpenPurchaseOrderStatus("Completed"), false);
+  assert.equal(isOpenPurchaseOrderStatus("Canceled"), false);
+  assert.equal(isOpenPurchaseOrderStatus("Void"), false);
+  assert.equal(isOpenPurchaseOrderStatus("Rejected"), false);
+});
+
+test("purchase-order duplicate detection checks both SKU and barcode identity", () => {
+  assert.deepEqual(
+    [
+      ...findDuplicatePurchaseOrderLineIndexes([
+        { sku: "SKU-1", barcode: "BAR-1" },
+        { sku: "SKU-2", barcode: "BAR-1" },
+        { sku: "SKU-1", barcode: "BAR-3" },
+        { sku: "SKU-4", barcode: "BAR-4" },
+      ]),
+    ].sort((left, right) => left - right),
+    [0, 1, 2],
+  );
+});
+
 test("open purchase-order handoff recovers fields from previously parsed raw rows", () => {
   const recovered = recoverOpenPurchaseOrderEvidence({
     raw: {
@@ -446,11 +497,13 @@ test("open purchase-order handoff recovers fields from previously parsed raw row
       "Qty Ordered": "12",
       "Qty Received": "5",
       "Cost (base)": "12,50",
+      Tax: "12.50",
     },
     normalized: {
       sku: "SKU-LEGACY",
       supplier: "SUP-LEGACY",
       quantity: "12",
+      taxRate: "12.50",
       status: "Partially Received",
       reference: "PO-LEGACY",
     },
@@ -462,9 +515,15 @@ test("open purchase-order handoff recovers fields from previously parsed raw row
   assert.equal(recovered.quantityOrdered, "12");
   assert.equal(recovered.quantityReceived, "5");
   assert.equal(recovered.cost, "12,50");
+  assert.equal(recovered.taxRate, null);
+  assert.equal(resolveOpenPurchaseOrderQuantity(recovered).quantity, 7);
+
   assert.equal(
-    resolveOpenPurchaseOrderQuantity(recovered).quantity,
-    7,
+    recoverOpenPurchaseOrderEvidence({
+      raw: { "Tax %": "6.5" },
+      normalized: { taxRate: "6.5" },
+    }).taxRate,
+    "6.5",
   );
 });
 
@@ -1979,6 +2038,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       supplier.body,
       /Supplier records cannot be exported directly from Stocky/,
     );
+    assert.match(supplier.body, /Supplier SKU evidence/);
 
     const checklist = await generateExport({
       storeId: store.id,
@@ -1989,7 +2049,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.match(checklist.body, /Upload Stocky CSV exports/);
     assert.match(
       checklist.body,
-      /historical Stocky purchase orders cannot be imported into Shopify/i,
+      /Historical Stocky purchase orders cannot be imported as Shopify history/i,
     );
     assert.match(checklist.body, /Confirm core historical report types/);
     assert.match(checklist.body, /report presence alone cannot prove/i);
@@ -1998,7 +2058,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.match(checklist.body, /Test Shopify replacement workflows/);
     assert.match(checklist.body, /Train staff and remove the Stocky POS tile/);
     assert.match(checklist.body, /Update Stocky-dependent integrations/);
-    assert.match(checklist.body, /recreate only its remaining quantities/);
+    assert.match(checklist.body, /use the Open PO import files in Exports/i);
 
     const priorityChecklist = await generateExport({
       storeId: store.id,
@@ -2023,9 +2083,8 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     assert.equal(
       openPoImports.filename,
       getOpenPurchaseOrderImportFilename(
-        fakeDb.state.uploadBatches.find(
-          (batch) => batch.id === result.batchId,
-        )?.createdAt ?? new Date(0),
+        fakeDb.state.uploadBatches.find((batch) => batch.id === result.batchId)
+          ?.createdAt ?? new Date(0),
       ),
     );
     assert.deepEqual(
@@ -2045,14 +2104,17 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       "SKU,Barcode,Supplier SKU,Quantity,Cost,Tax",
     );
     assert.match(
-      Buffer.from(openPoEntries["shopify-import/PO-2001.csv"]).toString(
-        "utf8",
-      ),
+      Buffer.from(openPoEntries["shopify-import/PO-2001.csv"]).toString("utf8"),
       /PLUS\+SKU\.1,,SUP-REF-771,6,12\.50,/,
     );
     const manualReviewLines = Buffer.from(
       openPoEntries["manual-review-lines.csv"],
     ).toString("utf8");
+    const purchaseOrderSummary = Buffer.from(
+      openPoEntries["purchase-order-summary.csv"],
+    ).toString("utf8");
+    assert.match(purchaseOrderSummary, /PO-1042[^\n]*,1,1,/);
+    assert.match(purchaseOrderSummary, /PO-1045[^\n]*,0,1,/);
     assert.match(manualReviewLines, /PO-1042/);
     assert.match(manualReviewLines, /unsafe_remaining_quantity/);
     assert.match(manualReviewLines, /PO-1045/);

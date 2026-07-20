@@ -31,16 +31,39 @@ export type OpenPurchaseOrderQuantityResolution = {
   reason: string;
 };
 
-export function isOpenPurchaseOrderStatus(
-  status: string | null | undefined,
-) {
+export type PurchaseOrderVariantIdentity = {
+  sku?: string | null;
+  barcode?: string | null;
+};
+
+export function isOpenPurchaseOrderStatus(status: string | null | undefined) {
   if (!status?.trim()) {
     return false;
   }
 
-  const value = status.toLowerCase().replace(/[_-]+/g, " ");
+  const value = status
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  const terminalPatterns = [
+    /\bclosed\b/,
+    /\bcomplete(?:d)?\b/,
+    /\bcancel(?:ed|led)\b/,
+    /\bvoid(?:ed)?\b/,
+    /\breject(?:ed)?\b/,
+    /\bfully received\b/,
+    /^received$/,
+  ];
+
+  if (terminalPatterns.some((pattern) => pattern.test(value))) {
+    return false;
+  }
+
   const openPatterns = [
     /\bpartially received\b/,
+    /\bpart received\b/,
+    /\breceived in part\b/,
     /\bpartial\b/,
     /\bnot received\b/,
     /\bunreceived\b/,
@@ -56,6 +79,34 @@ export function isOpenPurchaseOrderStatus(
   ];
 
   return openPatterns.some((pattern) => pattern.test(value));
+}
+
+export function findDuplicatePurchaseOrderLineIndexes(
+  lines: PurchaseOrderVariantIdentity[],
+) {
+  const indexesByIdentifier = new Map<string, number[]>();
+
+  lines.forEach((line, index) => {
+    const sku = clean(line.sku);
+    const barcode = clean(line.barcode);
+    const identifiers = [
+      sku ? `sku:${sku.toLowerCase()}` : null,
+      barcode ? `barcode:${barcode.toLowerCase()}` : null,
+    ].filter((identifier): identifier is string => Boolean(identifier));
+
+    for (const identifier of new Set(identifiers)) {
+      indexesByIdentifier.set(identifier, [
+        ...(indexesByIdentifier.get(identifier) ?? []),
+        index,
+      ]);
+    }
+  });
+
+  return new Set(
+    [...indexesByIdentifier.values()]
+      .filter((indexes) => indexes.length > 1)
+      .flat(),
+  );
 }
 
 export function resolveOpenPurchaseOrderQuantity(
@@ -96,7 +147,11 @@ export function resolveOpenPurchaseOrderQuantity(
   }
 
   const status = input.status?.toLowerCase().replace(/[_-]+/g, " ") ?? "";
-  if (/\b(partial|partially received|in transit|back ?order(?:ed)?)\b/.test(status)) {
+  if (
+    /\b(partial|partially received|in transit|back ?order(?:ed)?)\b/.test(
+      status,
+    )
+  ) {
     return {
       quantity: null,
       basis: "unavailable",
@@ -148,6 +203,10 @@ export function recoverOpenPurchaseOrderEvidence(payload: {
     (normalizedSku && normalizedSku !== supplierSku ? normalizedSku : null);
   const rawSupplier = rawValue(payload.raw, ["supplier", "supplier_name"]);
   const normalizedSupplier = clean(normalized.supplier);
+  const explicitRawTaxRate =
+    rawValue(payload.raw, ["tax_rate", "tax_percent", "tax_percentage"]) ??
+    rawExplicitTaxRateValue(payload.raw);
+  const ambiguousRawTax = rawValue(payload.raw, ["tax"]);
 
   return {
     sku,
@@ -222,14 +281,9 @@ export function recoverOpenPurchaseOrderEvidence(payload: {
         "landed_cost",
         "unit_price",
       ]),
-    taxRate:
-      clean(normalized.taxRate) ??
-      rawValue(payload.raw, [
-        "tax",
-        "tax_rate",
-        "tax_percent",
-        "tax_percentage",
-      ]),
+    taxRate: ambiguousRawTax
+      ? explicitRawTaxRate
+      : (clean(normalized.taxRate) ?? explicitRawTaxRate),
     status:
       clean(normalized.status) ??
       rawValue(payload.raw, [
@@ -280,6 +334,22 @@ function rawValue(raw: Record<string, string> | undefined, aliases: string[]) {
 
   for (const [header, value] of Object.entries(raw)) {
     if (aliases.includes(normalizeHeader(header)) && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function rawExplicitTaxRateValue(raw: Record<string, string> | undefined) {
+  if (!raw) return null;
+
+  for (const [header, value] of Object.entries(raw)) {
+    const normalized = normalizeHeader(header);
+    const explicit =
+      header.includes("%") || /\b(?:rate|percent|percentage)\b/i.test(header);
+
+    if (normalized === "tax" && explicit && value.trim()) {
       return value.trim();
     }
   }

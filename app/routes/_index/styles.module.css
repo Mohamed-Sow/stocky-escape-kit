@@ -167,10 +167,15 @@
 }
 
 .outcomes p,
-.truthPanel > p {
+.truthCopy p {
   color: #5d605e;
   line-height: 1.6;
   margin: 0;
+}
+
+.truthCopy {
+  display: grid;
+  gap: 16px;
 }
 
 .truthPanel {

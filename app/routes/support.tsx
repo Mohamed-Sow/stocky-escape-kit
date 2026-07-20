@@ -51,8 +51,11 @@ export default function Support() {
         <h2>Product boundary</h2>
         <p>
           Historical Stocky purchase orders are preserved and reviewed as
-          migration evidence. They are not imported into Shopify. The app does
-          not perform Shopify inventory writes.
+          migration evidence. Open purchase-order rows can be exported as
+          Shopify-format draft line-item CSVs when the source identity and
+          remaining quantity are safe, but historical purchase orders are not
+          imported as Shopify history. The app does not perform Shopify
+          inventory writes.
         </p>
         <p>
           Catalog audits currently support stores with up to 5,000 Shopify
