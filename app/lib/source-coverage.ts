@@ -7,6 +7,7 @@ export const CORE_STOCKY_REPORT_TYPES = [
 export const SUPPLEMENTAL_STOCKY_REPORT_TYPES = [
   "PRODUCTS",
   "INVENTORY_ACTIVITY",
+  "VENDORS",
 ] as const;
 
 export type StockySourceReportType =
@@ -19,6 +20,7 @@ const REPORT_LABELS: Record<StockySourceReportType, string> = {
   STOCKTAKES: "stocktakes",
   HISTORICAL_COSTS: "historical stock-on-hand or cost reports",
   INVENTORY_ACTIVITY: "inventory activity",
+  VENDORS: "vendor or supplier-reference reports",
 };
 
 export function resolveStockySourceCoverage(

@@ -1546,7 +1546,8 @@ function Exports({ data, selectedBatchId }: ViewProps) {
             <h3>Download the complete migration package</h3>
             <p>
               One ZIP with every preserved original CSV, all four generated
-              reports, and a SHA-256 checksum manifest.
+              reports, open purchase-order import files, and a SHA-256
+              checksum manifest.
             </p>
           </div>
           {selectedBatchId && migrationPackageAvailable ? (
@@ -1565,6 +1566,35 @@ function Exports({ data, selectedBatchId }: ViewProps) {
             detail="Choose a migration run before generating exports."
           />
         ) : null}
+      </section>
+      <section className={styles.panel}>
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>Open purchase orders</p>
+            <h3>Move remaining Stocky order lines into Shopify drafts</h3>
+            <p>
+              Download one official-format Shopify import CSV per Stocky PO.
+              Partial, duplicate, unidentified, and unsafe-quantity lines are
+              withheld in a separate manual-review report.
+            </p>
+          </div>
+          {selectedBatchId && migrationPackageAvailable ? (
+            <AuthenticatedDownloadButton
+              label="Download open PO files"
+              path={`/app/open-po-imports?batch=${encodeURIComponent(selectedBatchId)}`}
+            />
+          ) : selectedBatchId ? (
+            <span className={styles.lockedLabel}>Unavailable</span>
+          ) : (
+            <button disabled>Choose a run</button>
+          )}
+        </div>
+        <p className={styles.muted}>
+          These files recreate open work only. They do not import historical
+          Stocky purchase orders as Shopify history. Verify supplier,
+          destination, remaining quantity, cost, tax, and currency before
+          marking any Shopify purchase order as ordered.
+        </p>
       </section>
       <section className={styles.exportGrid}>
         {data.exports.map((item) => (

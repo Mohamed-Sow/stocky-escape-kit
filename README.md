@@ -16,7 +16,9 @@ This app should not become full inventory management software in v1.
 - App stores raw uploaded CSV bytes, file hashes, normalized rows, unknown columns, and import metadata.
 - App matches Stocky rows to Shopify SKUs, products, variants, and inventory items, and verifies Stocky-reported location names against current Shopify locations.
 - App reports missing SKUs, duplicate SKUs, missing cost, missing barcode, missing vendor, Stocky location names absent from Shopify, parse errors, and supplier reconstruction candidates. It does not infer per-SKU location quantities.
-- Merchant exports clean archive and migration reports.
+- Merchant exports a clean archive, migration reports, and per-purchase-order
+  Shopify line-item import files for open Stocky work that can be derived
+  safely.
 
 ## Implemented App Flow
 
@@ -28,6 +30,13 @@ This app should not become full inventory management software in v1.
 - Audit findings are regenerated from uploaded Stocky rows and the latest synced Shopify catalog. Historical transaction rows are not misclassified as duplicate products, supplier-only evidence does not create false missing-SKU blockers, and malformed costs, quantities, dates, and row shapes become visible findings. The Findings screen searches and paginates the complete run rather than filtering only a truncated first page.
 - Every active plan includes the parsed archive, complete audit findings, supplier evidence, migration checklist, location-name audit, and complete migration package. The package combines every preserved original CSV with all generated reports and a SHA-256 manifest. Plans differ by safe processing and storage capacity, not by withholding core migration outputs. Raw CSVs also remain individually downloadable from the parsed files table. If billing ends, existing runs remain downloadable and deletable; only new uploads and catalog syncs pause.
 - The migration checklist verifies that Shopify's core historical report types—completed purchase orders, stocktake history, and historical stock-on-hand or cost reports—are represented, while treating product, custom SKU, and inventory activity reports as supplemental evidence. It explicitly warns that file presence cannot prove every intended date range or record was exported. The checklist also includes the operational cutover work Shopify cannot infer from read-only data: closing or recreating in-flight quantities, testing replacement Shopify workflows, training staff, removing the Stocky POS tile, and updating Stocky-dependent integrations.
+- Open Stocky purchase orders produce a fail-closed handoff ZIP. Each safely
+  identified purchase order gets its own CSV using Shopify's official `SKU,
+  Barcode, Supplier SKU, Quantity, Cost, Tax` import template. Partial,
+  in-transit, duplicate, unidentified, or ambiguous-quantity lines are kept
+  out of import files and listed in `manual-review-lines.csv`. These files
+  create draft line items only; they do not import historical Stocky purchase
+  orders as Shopify history.
 - A transient Partner API failure uses the last verified active billing state for at most 24 hours. A successful no-subscription response cancels access immediately; an outage cannot grant indefinite paid access.
 - A canceled subscription remains read-only so the merchant can retrieve or delete existing evidence. Delivery of Shopify's `APP_UNINSTALLED` webhook deletes the store and all cascaded migration data.
 

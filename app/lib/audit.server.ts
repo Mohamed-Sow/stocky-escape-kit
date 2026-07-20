@@ -7,6 +7,11 @@ import {
 import type { Prisma } from "@prisma/client";
 import db from "../db.server";
 import { readCatalogSummary, type CatalogVariant } from "./catalog.server";
+import {
+  isOpenPurchaseOrderStatus,
+  recoverOpenPurchaseOrderEvidence,
+  resolveOpenPurchaseOrderQuantity,
+} from "./open-purchase-orders";
 import { reportRequiresSku } from "./stocky-parser.server";
 
 type NormalizedPayload = {
@@ -15,6 +20,7 @@ type NormalizedPayload = {
   raw?: Record<string, string>;
   normalized?: {
     sku?: string | null;
+    supplierSku?: string | null;
     title?: string | null;
     barcode?: string | null;
     vendor?: string | null;
@@ -22,6 +28,10 @@ type NormalizedPayload = {
     location?: string | null;
     cost?: string | null;
     quantity?: string | null;
+    quantityOrdered?: string | null;
+    quantityReceived?: string | null;
+    quantityOutstanding?: string | null;
+    taxRate?: string | null;
     status?: string | null;
     date?: string | null;
     reference?: string | null;
@@ -121,11 +131,21 @@ export async function regenerateAuditFindings({
         sourceRowNumbers: number[];
         skus: Set<string>;
         lineCount: number;
+        importReadyLineCount: number;
+        manualReviewLineCount: number;
         lineEvidence: Array<{
           sourceRowNumber: number;
           sku: string | null;
           status: string | null;
           quantity: string | null;
+          quantityOrdered: string | null;
+          quantityReceived: string | null;
+          quantityOutstanding: string | null;
+          shopifyImportQuantity: number | null;
+          quantityBasis: string;
+          supplierSku: string | null;
+          barcode: string | null;
+          taxRate: string | null;
           cost: string | null;
           location: string | null;
           date: string | null;
@@ -177,8 +197,17 @@ export async function regenerateAuditFindings({
         recordedFileMetadata = true;
       }
 
-      const normalized = payload.normalized ?? {};
-      const sku = record.sku?.trim() || normalized.sku?.trim() || null;
+      const normalized =
+        file.detectedReportType === StockyReportType.PURCHASE_ORDERS
+          ? {
+              ...(payload.normalized ?? {}),
+              ...recoverOpenPurchaseOrderEvidence(payload),
+            }
+          : (payload.normalized ?? {});
+      const sku =
+        file.detectedReportType === StockyReportType.PURCHASE_ORDERS
+          ? normalized.sku?.trim() || null
+          : record.sku?.trim() || normalized.sku?.trim() || null;
 
       for (const warning of readWarnings(record.warnings)) {
         if (warning === "missing_sku") continue;
@@ -199,10 +228,15 @@ export async function regenerateAuditFindings({
         });
       }
 
-      if (normalized.supplier || normalized.vendor) {
+      if (
+        normalized.supplier ||
+        normalized.vendor ||
+        normalized.supplierSku
+      ) {
         const supplier = normalized.supplier?.trim() || null;
         const vendor = normalized.vendor?.trim() || null;
-        const evidence = supplier ?? vendor ?? "Unknown";
+        const supplierSku = normalized.supplierSku?.trim() || null;
+        const evidence = supplier ?? vendor ?? supplierSku ?? "Unknown";
 
         addFinding(pending, {
           severity: FindingSeverity.INFO,
@@ -210,13 +244,17 @@ export async function regenerateAuditFindings({
           sku,
           title: supplier
             ? "Supplier evidence preserved from Stocky"
-            : "Vendor evidence may help identify a supplier",
+            : vendor
+              ? "Vendor evidence may help identify a supplier"
+              : "Supplier SKU evidence preserved from Stocky",
           message: sku
-            ? `${sku} has ${supplier ? "supplier" : "vendor-only"} evidence from ${evidence}.`
-            : `${evidence} appears in ${file.originalFilename} as ${supplier ? "supplier" : "vendor-only"} evidence without a product SKU.`,
+            ? `${sku} has ${supplier ? "supplier" : vendor ? "vendor-only" : "supplier-SKU"} evidence from ${evidence}.`
+            : `${evidence} appears in ${file.originalFilename} as ${supplier ? "supplier" : vendor ? "vendor-only" : "supplier-SKU"} evidence without a product SKU.`,
           recommendedAction: supplier
             ? "Use purchase-order and custom SKU report evidence to rebuild supplier records manually. Stocky supplier records cannot be exported directly."
-            : "Treat this vendor value as a lead, not proof of the supplier. Confirm it against purchase orders or custom SKU reports before recreating supplier records.",
+            : vendor
+              ? "Treat this vendor value as a lead, not proof of the supplier. Confirm it against purchase orders or custom SKU reports before recreating supplier records."
+              : "Use this as the optional Supplier SKU when recreating an open line, but confirm the supplier separately because a supplier SKU does not identify the supplier business.",
           source: sourceFor(
             file.originalFilename,
             record.sourceRowNumber,
@@ -237,11 +275,26 @@ export async function regenerateAuditFindings({
           sourceRowNumbers: [],
           skus: new Set<string>(),
           lineCount: 0,
+          importReadyLineCount: 0,
+          manualReviewLineCount: 0,
           lineEvidence: [],
         };
 
+        const quantityResolution = resolveOpenPurchaseOrderQuantity({
+          status: normalized.status,
+          quantity: normalized.quantity,
+          quantityOrdered: normalized.quantityOrdered,
+          quantityReceived: normalized.quantityReceived,
+          quantityOutstanding: normalized.quantityOutstanding,
+        });
+
         purchaseOrder.statuses.add(normalized.status?.trim() || "unknown");
         purchaseOrder.lineCount += 1;
+        if (quantityResolution.quantity === null || (!sku && !normalized.barcode)) {
+          purchaseOrder.manualReviewLineCount += 1;
+        } else {
+          purchaseOrder.importReadyLineCount += 1;
+        }
         if (purchaseOrder.sourceRowNumbers.length < 200) {
           purchaseOrder.sourceRowNumbers.push(record.sourceRowNumber);
         }
@@ -252,6 +305,15 @@ export async function regenerateAuditFindings({
             sku,
             status: normalized.status?.trim() || null,
             quantity: normalized.quantity?.trim() || null,
+            quantityOrdered: normalized.quantityOrdered?.trim() || null,
+            quantityReceived: normalized.quantityReceived?.trim() || null,
+            quantityOutstanding:
+              normalized.quantityOutstanding?.trim() || null,
+            shopifyImportQuantity: quantityResolution.quantity,
+            quantityBasis: quantityResolution.basis,
+            supplierSku: normalized.supplierSku?.trim() || null,
+            barcode: normalized.barcode?.trim() || null,
+            taxRate: normalized.taxRate?.trim() || null,
             cost: normalized.cost?.trim() || null,
             location: normalized.location?.trim() || null,
             date: normalized.date?.trim() || null,
@@ -456,15 +518,23 @@ export async function regenerateAuditFindings({
         `${file.originalFilename} row ${purchaseOrder.sourceRowNumbers[0]}`;
       const statuses = [...purchaseOrder.statuses].join(", ");
       const skuCount = purchaseOrder.skus.size;
+      const handoffSummary =
+        purchaseOrder.importReadyLineCount > 0
+          ? ` ${purchaseOrder.importReadyLineCount} row${purchaseOrder.importReadyLineCount === 1 ? " is" : "s are"} eligible for a Shopify purchase-order import CSV after merchant verification.`
+          : " No row has enough safe identity and quantity evidence for an import CSV.";
+      const manualReviewSummary =
+        purchaseOrder.manualReviewLineCount > 0
+          ? ` ${purchaseOrder.manualReviewLineCount} row${purchaseOrder.manualReviewLineCount === 1 ? " needs" : "s need"} manual review.`
+          : "";
 
       addFinding(pending, {
         severity: FindingSeverity.INFO,
         category: FindingCategory.OPEN_PURCHASE_ORDER_INDICATOR,
         sku: null,
         title: "Stocky purchase order may still need action",
-        message: `${reference} has ${purchaseOrder.lineCount} preserved row${purchaseOrder.lineCount === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.`,
+        message: `${reference} has ${purchaseOrder.lineCount} preserved row${purchaseOrder.lineCount === 1 ? "" : "s"} with open-work status ${statuses}${skuCount > 0 ? ` across ${skuCount} SKU${skuCount === 1 ? "" : "s"}` : " and no usable SKU"}.${handoffSummary}${manualReviewSummary}`,
         recommendedAction:
-          "Receive and close this order before cutover when possible. If it remains open, recreate only its remaining quantities in Shopify; historical Stocky purchase orders cannot be imported.",
+          "Receive and close this order before cutover when possible. If it remains open, download the Open PO import files from Exports, verify the supplier, destination, costs, tax, and remaining quantities, then import each CSV into a Shopify draft purchase order. This recreates open work only; historical Stocky purchase orders cannot be imported as history.",
         source: {
           fileId: file.id,
           filename: file.originalFilename,
@@ -474,6 +544,8 @@ export async function regenerateAuditFindings({
           skus: [...purchaseOrder.skus],
           statuses: [...purchaseOrder.statuses],
           lineCount: purchaseOrder.lineCount,
+          importReadyLineCount: purchaseOrder.importReadyLineCount,
+          manualReviewLineCount: purchaseOrder.manualReviewLineCount,
           lineEvidence: purchaseOrder.lineEvidence,
         },
       });
@@ -677,6 +749,12 @@ function parserWarningCopy(warning: string) {
         recommendedAction:
           "Correct or confirm the affected Stocky dates before using them to plan cutover work.",
       };
+    case "invalid_tax":
+      return {
+        title: "Tax values could not be interpreted",
+        recommendedAction:
+          "Correct or confirm the affected Stocky tax percentages before using an open purchase-order import file.",
+      };
     default:
       return {
         title: "CSV rows need parser review",
@@ -696,27 +774,4 @@ function sourceFor(
     sourceRowNumber,
     normalized: payload.normalized ?? {},
   };
-}
-
-function isOpenPurchaseOrderStatus(status: string | null | undefined) {
-  if (!status) {
-    return false;
-  }
-
-  const value = status.toLowerCase();
-
-  return [
-    "open",
-    "pending",
-    "partial",
-    "ordered",
-    "unreceived",
-    "not received",
-    "in transit",
-    "in-transit",
-    "draft",
-    "sent",
-    "submitted",
-    "approved",
-  ].some((openStatus) => value.includes(openStatus));
 }

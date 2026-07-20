@@ -6,6 +6,7 @@ import db from "../db.server";
 import { getReviewKitFilename } from "./export-filenames";
 import { generateExport, type ExportGenerationOptions } from "./exports.server";
 import { safeDownloadFilename } from "./filenames.server";
+import { generateOpenPurchaseOrderImportPackage } from "./open-po-import.server";
 
 export async function generateReviewKit({
   storeId,
@@ -98,6 +99,20 @@ export async function generateReviewKit({
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
   }
+
+  const openPoImports = await generateOpenPurchaseOrderImportPackage({
+    storeId,
+    batchId,
+  });
+  entries[openPoImports.filename] = openPoImports.bytes;
+  manifest.push({
+    kind: "report",
+    filename: openPoImports.filename,
+    bytes: openPoImports.bytes.byteLength,
+    sha256: createHash("sha256")
+      .update(Buffer.from(openPoImports.bytes))
+      .digest("hex"),
+  });
 
   const manifestBody = `${JSON.stringify(
     {

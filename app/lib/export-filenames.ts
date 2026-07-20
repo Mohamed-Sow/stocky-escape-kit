@@ -18,3 +18,7 @@ export function getExportFilename(exportType: ExportType, runCreatedAt: Date) {
 export function getReviewKitFilename(runCreatedAt: Date) {
   return `stocky-migration-package-run-${formatRunFilenameStamp(runCreatedAt)}.zip`;
 }
+
+export function getOpenPurchaseOrderImportFilename(runCreatedAt: Date) {
+  return `stocky-open-po-imports-run-${formatRunFilenameStamp(runCreatedAt)}.zip`;
+}

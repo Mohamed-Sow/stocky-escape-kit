@@ -1,6 +1,7 @@
 import { StockyReportType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { parseCsv } from "./csv.server";
+import { parseStockyDecimal, parseStockyInteger } from "./stocky-numbers";
 import type { StockyCsvEncoding } from "./text-decoding.server";
 
 type ParsedStockyRecord = {
@@ -29,8 +30,13 @@ const FIELD_ALIASES = {
     "stock_code",
     "item_code",
     "item_id",
+  ],
+  supplierSku: [
     "supplier_sku",
     "vendor_sku",
+    "supplier_ref",
+    "supplier_reference",
+    "supplier_item_code",
   ],
   title: [
     "title",
@@ -61,7 +67,6 @@ const FIELD_ALIASES = {
     "supplier_name",
     "supplier_code",
     "vendor_code",
-    "supplier_ref",
   ],
   location: [
     "location",
@@ -126,6 +131,28 @@ const FIELD_ALIASES = {
     "total_items",
     "total_quantity",
   ],
+  quantityOrdered: [
+    "qty_ordered",
+    "quantity_ordered",
+    "ordered_quantity",
+    "order_qty",
+  ],
+  quantityReceived: [
+    "qty_received",
+    "quantity_received",
+    "received_quantity",
+    "received_qty",
+  ],
+  quantityOutstanding: [
+    "qty_outstanding",
+    "quantity_outstanding",
+    "qty_remaining",
+    "remaining_quantity",
+    "unreceived_quantity",
+    "qty_unreceived",
+    "backordered_quantity",
+  ],
+  taxRate: ["tax", "tax_rate", "tax_percent", "tax_percentage"],
   status: [
     "status",
     "line_status",
@@ -222,13 +249,24 @@ export function parseStockyCsv({
         normalized.totalCost,
         normalized.retailValue,
         normalized.adjustmentCost,
-      ].some((value) => value && !isPlausibleNumber(value))
+      ].some((value) => value && parseStockyDecimal(value) === null)
     ) {
       warnings.push("invalid_cost");
     }
 
-    if (normalized.quantity && !isPlausibleNumber(normalized.quantity)) {
+    if (
+      [
+        normalized.quantity,
+        normalized.quantityOrdered,
+        normalized.quantityReceived,
+        normalized.quantityOutstanding,
+      ].some((value) => value && parseStockyInteger(value) === null)
+    ) {
       warnings.push("invalid_quantity");
+    }
+
+    if (normalized.taxRate && parseStockyDecimal(normalized.taxRate) === null) {
+      warnings.push("invalid_tax");
     }
 
     if (normalized.date && !isPlausibleDate(normalized.date)) {
@@ -373,6 +411,7 @@ function extractNormalizedFields(
 ) {
   return {
     sku: valueFor(raw, headerColumns, FIELD_ALIASES.sku),
+    supplierSku: valueFor(raw, headerColumns, FIELD_ALIASES.supplierSku),
     title: valueFor(raw, headerColumns, FIELD_ALIASES.title),
     barcode: valueFor(raw, headerColumns, FIELD_ALIASES.barcode),
     shopifyId: valueFor(raw, headerColumns, FIELD_ALIASES.shopifyId),
@@ -388,6 +427,22 @@ function extractNormalizedFields(
       FIELD_ALIASES.adjustmentCost,
     ),
     quantity: valueFor(raw, headerColumns, FIELD_ALIASES.quantity),
+    quantityOrdered: valueFor(
+      raw,
+      headerColumns,
+      FIELD_ALIASES.quantityOrdered,
+    ),
+    quantityReceived: valueFor(
+      raw,
+      headerColumns,
+      FIELD_ALIASES.quantityReceived,
+    ),
+    quantityOutstanding: valueFor(
+      raw,
+      headerColumns,
+      FIELD_ALIASES.quantityOutstanding,
+    ),
+    taxRate: valueFor(raw, headerColumns, FIELD_ALIASES.taxRate),
     status: valueFor(raw, headerColumns, FIELD_ALIASES.status),
     date: valueFor(raw, headerColumns, FIELD_ALIASES.date),
     reference: valueFor(raw, headerColumns, FIELD_ALIASES.reference),
@@ -452,27 +507,6 @@ function findDuplicateHeaders(headers: string[]) {
   return [...counts.entries()]
     .filter(([, value]) => value.count > 1)
     .map(([, value]) => value.display);
-}
-
-function isPlausibleNumber(value: string) {
-  let candidate = value.trim();
-
-  if (/^\(.*\)$/.test(candidate)) {
-    candidate = `-${candidate.slice(1, -1)}`;
-  }
-
-  candidate = candidate
-    .replace(/^[A-Z]{3}\s*/i, "")
-    .replace(/\s*[A-Z]{3}$/i, "")
-    .replace(/[$£€¥₹]/g, "")
-    .replace(/[\s']/g, "");
-
-  return [
-    /^[+-]?\d+$/,
-    /^[+-]?\d+[.,]\d+$/,
-    /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/,
-    /^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$/,
-  ].some((pattern) => pattern.test(candidate));
 }
 
 function isPlausibleDate(value: string) {

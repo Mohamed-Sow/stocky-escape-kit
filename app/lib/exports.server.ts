@@ -351,6 +351,7 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
         "title",
         "supplier_hint",
         "vendor_hint",
+        "supplier_sku_hint",
         "source_file",
         "source_row",
         "stocky_reference",
@@ -393,6 +394,7 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
         const normalized = payload.normalized ?? {};
         const supplier = normalized.supplier ?? "";
         const vendor = normalized.vendor ?? "";
+        const supplierSku = normalized.supplierSku ?? "";
 
         return {
           file: record.uploadedFile.originalFilename,
@@ -401,6 +403,7 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
           title: normalized.title ?? "",
           supplier,
           vendor,
+          supplierSku,
           reference: normalized.reference ?? "",
           status: normalized.status ?? "",
           quantity: normalized.quantity ?? "",
@@ -409,7 +412,7 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
           date: normalized.date ?? "",
         };
       })
-      .filter((row) => row.supplier || row.vendor);
+      .filter((row) => row.supplier || row.vendor || row.supplierSku);
 
     if (rows.length > 0) {
       chunks.push(
@@ -419,6 +422,7 @@ async function buildSupplierCsv(storeId: string, batchId: string) {
             row.title,
             row.supplier,
             row.vendor,
+            row.supplierSku,
             row.file,
             String(row.row),
             row.reference,

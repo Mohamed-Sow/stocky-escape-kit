@@ -25,9 +25,11 @@ import {
 } from "../app/lib/catalog.server";
 import { parseCsv, toCsv } from "../app/lib/csv.server";
 import { generateExport } from "../app/lib/exports.server";
+import { generateOpenPurchaseOrderImportPackage } from "../app/lib/open-po-import.server";
 import {
   formatRunFilenameStamp,
   getExportFilename,
+  getOpenPurchaseOrderImportFilename,
   getReviewKitFilename,
 } from "../app/lib/export-filenames";
 import {
@@ -83,6 +85,11 @@ import {
   parseStockyCsv,
   reportRequiresSku,
 } from "../app/lib/stocky-parser.server";
+import { parseStockyDecimal, parseStockyInteger } from "../app/lib/stocky-numbers";
+import {
+  recoverOpenPurchaseOrderEvidence,
+  resolveOpenPurchaseOrderQuantity,
+} from "../app/lib/open-purchase-orders";
 import { getSafeRequestPath } from "../server/request-logging.mjs";
 
 const STOCKY_FIXTURE_DIR = path.join(process.cwd(), "fixtures", "stocky");
@@ -161,6 +168,8 @@ test("merchant-facing workflow labels stay truthful and task-oriented", () => {
   assert.match(dashboardRoute, /label="Rows parsed"/);
   assert.doesNotMatch(dashboardRoute, /label="Rows imported"/);
   assert.match(dashboardRoute, /Download the complete migration package/);
+  assert.match(dashboardRoute, /Download open PO files/);
+  assert.match(dashboardRoute, /official-format Shopify import CSV per Stocky PO/);
   assert.doesNotMatch(dashboardRoute, /Download the complete review kit/);
   assert.match(dashboardRoute, /Before August 31, 2026/);
   assert.match(dashboardRoute, /role="note"/);
@@ -200,7 +209,7 @@ test("source coverage requires every core successfully parsed Stocky report", ()
 
   assert.equal(partial.coreTypesRepresented, false);
   assert.deepEqual(partial.covered, []);
-  assert.deepEqual(partial.supplementalCovered, ["PRODUCTS"]);
+  assert.deepEqual(partial.supplementalCovered, ["PRODUCTS", "VENDORS"]);
   assert.ok(partial.missing.includes("PURCHASE_ORDERS"));
   assert.equal(complete.coreTypesRepresented, true);
   assert.equal(complete.covered.length, complete.total);
@@ -389,6 +398,76 @@ test("Stocky parser flags malformed cost, quantity, and date evidence", () => {
   ]);
 });
 
+test("Stocky numeric normalization fails closed on ambiguous money and resolves whole quantities", () => {
+  assert.equal(parseStockyDecimal("12,50"), 12.5);
+  assert.equal(parseStockyDecimal("1.234,56"), 1234.56);
+  assert.equal(parseStockyDecimal("1,234.56"), 1234.56);
+  assert.equal(parseStockyDecimal("1,234"), null);
+  assert.equal(parseStockyInteger("1,234"), 1234);
+  assert.equal(parseStockyInteger("12.5"), null);
+});
+
+test("open purchase-order quantities never guess a partial remaining balance", () => {
+  assert.deepEqual(
+    resolveOpenPurchaseOrderQuantity({
+      status: "Partially Received",
+      quantityOrdered: "12",
+      quantityReceived: "5",
+    }),
+    {
+      quantity: 7,
+      basis: "ordered_minus_received",
+      reason: "Calculated ordered quantity minus received quantity.",
+    },
+  );
+  assert.equal(
+    resolveOpenPurchaseOrderQuantity({
+      status: "Partially Received",
+      quantity: "12",
+    }).quantity,
+    null,
+  );
+  assert.equal(
+    resolveOpenPurchaseOrderQuantity({
+      status: "Not received",
+      quantity: "12",
+    }).quantity,
+    12,
+  );
+});
+
+test("open purchase-order handoff recovers fields from previously parsed raw rows", () => {
+  const recovered = recoverOpenPurchaseOrderEvidence({
+    raw: {
+      "P.O. Number": "PO-LEGACY",
+      "Line Status": "Partially Received",
+      "Stock Code": "SKU-LEGACY",
+      "Supplier Ref #": "SUP-LEGACY",
+      "Qty Ordered": "12",
+      "Qty Received": "5",
+      "Cost (base)": "12,50",
+    },
+    normalized: {
+      sku: "SKU-LEGACY",
+      supplier: "SUP-LEGACY",
+      quantity: "12",
+      status: "Partially Received",
+      reference: "PO-LEGACY",
+    },
+  });
+
+  assert.equal(recovered.sku, "SKU-LEGACY");
+  assert.equal(recovered.supplierSku, "SUP-LEGACY");
+  assert.equal(recovered.supplier, null);
+  assert.equal(recovered.quantityOrdered, "12");
+  assert.equal(recovered.quantityReceived, "5");
+  assert.equal(recovered.cost, "12,50");
+  assert.equal(
+    resolveOpenPurchaseOrderQuantity(recovered).quantity,
+    7,
+  );
+});
+
 test("Stocky parser recognizes current documented Stocky report shapes", () => {
   const stocktake = parseStockyCsv({
     filename: "stocktake.csv",
@@ -475,14 +554,66 @@ test("duplicate normalized headers preserve every value and use the first nonbla
   assert.equal(parsed.warningCount, 1);
 });
 
-test("supplier-named files with a SKU column remain product evidence", () => {
+test("supplier SKUs remain distinct from Shopify variant SKUs", () => {
   const parsed = parseStockyCsv({
     filename: "supplier-custom-sku-report.csv",
     content: "Supplier SKU,Supplier Name,Product Name\nSUP-1,Acme,Widget",
   });
 
-  assert.equal(parsed.reportType, StockyReportType.PRODUCTS);
-  assert.equal(parsed.records[0].sku, "SUP-1");
+  assert.equal(parsed.reportType, StockyReportType.VENDORS);
+  assert.equal(parsed.records[0].sku, null);
+  assert.equal(
+    (
+      parsed.records[0].normalizedPayload.normalized as {
+        supplierSku?: string;
+      }
+    ).supplierSku,
+    "SUP-1",
+  );
+});
+
+test("purchase-order quantities preserve ordered, received, and remaining evidence", () => {
+  const parsed = parseStockyCsv({
+    filename: "purchase-orders.csv",
+    content:
+      "PO Number,Status,SKU,Supplier SKU,Qty Ordered,Qty Received,Qty Remaining,Tax %\nPO-1,Partially Received,SKU-1,SUP-1,12,5,7,6.5",
+  });
+  const normalized = parsed.records[0].normalizedPayload.normalized as {
+    sku?: string;
+    supplierSku?: string;
+    quantity?: string;
+    quantityOrdered?: string;
+    quantityReceived?: string;
+    quantityOutstanding?: string;
+    taxRate?: string;
+  };
+
+  assert.equal(parsed.records[0].sku, "SKU-1");
+  assert.deepEqual(normalized, {
+    sku: "SKU-1",
+    supplierSku: "SUP-1",
+    title: null,
+    barcode: null,
+    shopifyId: null,
+    vendor: null,
+    supplier: null,
+    location: null,
+    cost: null,
+    totalCost: null,
+    retailValue: null,
+    adjustmentCost: null,
+    quantity: "12",
+    quantityOrdered: "12",
+    quantityReceived: "5",
+    quantityOutstanding: "7",
+    taxRate: "6.5",
+    status: "Partially Received",
+    date: null,
+    reference: "PO-1",
+    reason: null,
+    employee: null,
+  });
+  assert.deepEqual(parsed.records[0].warnings, []);
 });
 
 test("Stocky parser detects product exports and preserves unknown columns", () => {
@@ -500,6 +631,7 @@ test("Stocky parser detects product exports and preserves unknown columns", () =
   assert.deepEqual(record.warnings, []);
   assert.deepEqual(record.normalizedPayload.normalized, {
     sku: "ABC-1",
+    supplierSku: null,
     title: "Widget",
     barcode: "12345",
     shopifyId: null,
@@ -511,6 +643,10 @@ test("Stocky parser detects product exports and preserves unknown columns", () =
     retailValue: null,
     adjustmentCost: null,
     quantity: null,
+    quantityOrdered: null,
+    quantityReceived: null,
+    quantityOutstanding: null,
+    taxRate: null,
     status: null,
     date: null,
     reference: null,
@@ -1394,7 +1530,7 @@ test("proprietary delimiter fixtures preserve odd Stocky and Shopify columns", (
   assert.equal(firstPoRecord.sku, "PLUS+SKU.1");
   assert.equal(getNormalized(firstPoRecord, "reference"), "PO-2001");
   assert.equal(getNormalized(firstPoRecord, "status"), "Not received");
-  assert.equal(getNormalized(firstPoRecord, "supplier"), "SUP-REF-771");
+  assert.equal(getNormalized(firstPoRecord, "supplierSku"), "SUP-REF-771");
   assert.equal(getNormalized(firstPoRecord, "quantity"), "6");
   assert.equal(getNormalized(firstPoRecord, "totalCost"), "75,00");
   assert.equal(getNormalized(firstPoRecord, "cost"), "12,50");
@@ -1834,7 +1970,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
     });
     assert.ok(
       supplier.body.startsWith(
-        "sku,title,supplier_hint,vendor_hint,source_file,source_row,stocky_reference,stocky_status,stocky_quantity,stocky_unit_cost,stocky_location,stocky_date,recommended_action",
+        "sku,title,supplier_hint,vendor_hint,supplier_sku_hint,source_file,source_row,stocky_reference,stocky_status,stocky_quantity,stocky_unit_cost,stocky_location,stocky_date,recommended_action",
       ),
     );
     assert.match(supplier.body, /SUP-REF-771/);
@@ -1876,6 +2012,56 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       ),
     );
 
+    const openPoImports = await generateOpenPurchaseOrderImportPackage({
+      storeId: store.id,
+      batchId: result.batchId,
+    });
+    const openPoEntries = unzipSync(openPoImports.bytes);
+    assert.equal(openPoImports.readyPurchaseOrderCount, 3);
+    assert.equal(openPoImports.readyLineCount, 3);
+    assert.equal(openPoImports.excludedLineCount, 2);
+    assert.equal(
+      openPoImports.filename,
+      getOpenPurchaseOrderImportFilename(
+        fakeDb.state.uploadBatches.find(
+          (batch) => batch.id === result.batchId,
+        )?.createdAt ?? new Date(0),
+      ),
+    );
+    assert.deepEqual(
+      Object.keys(openPoEntries)
+        .filter((filename) => filename.startsWith("shopify-import/"))
+        .sort(),
+      [
+        "shopify-import/PO-1042.csv",
+        "shopify-import/PO-1043.csv",
+        "shopify-import/PO-2001.csv",
+      ],
+    );
+    assert.equal(
+      Buffer.from(openPoEntries["shopify-import/PO-2001.csv"])
+        .toString("utf8")
+        .split("\n")[0],
+      "SKU,Barcode,Supplier SKU,Quantity,Cost,Tax",
+    );
+    assert.match(
+      Buffer.from(openPoEntries["shopify-import/PO-2001.csv"]).toString(
+        "utf8",
+      ),
+      /PLUS\+SKU\.1,,SUP-REF-771,6,12\.50,/,
+    );
+    const manualReviewLines = Buffer.from(
+      openPoEntries["manual-review-lines.csv"],
+    ).toString("utf8");
+    assert.match(manualReviewLines, /PO-1042/);
+    assert.match(manualReviewLines, /unsafe_remaining_quantity/);
+    assert.match(manualReviewLines, /PO-1045/);
+    assert.match(manualReviewLines, /missing_shopify_variant_identifier/);
+    assert.match(
+      Buffer.from(openPoEntries["README.txt"]).toString("utf8"),
+      /do not import historical Stocky purchase orders as history/i,
+    );
+
     const reviewKit = await generateReviewKit({
       storeId: store.id,
       batchId: result.batchId,
@@ -1893,6 +2079,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
         "manifest.json",
         `stocky-audit-findings-run-${runStamp}.csv`,
         `stocky-migration-checklist-run-${runStamp}.csv`,
+        `stocky-open-po-imports-run-${runStamp}.zip`,
         `stocky-parsed-archive-run-${runStamp}.csv`,
         `stocky-supplier-evidence-run-${runStamp}.csv`,
       ],
@@ -1915,7 +2102,7 @@ test("merchant workflow imports fixture batches, audits against catalog, and exp
       files: Array<{ filename: string; bytes: number; sha256: string }>;
     };
     assert.equal(manifest.batchId, result.batchId);
-    assert.equal(manifest.files.length, 4 + fixtureFilenames.length);
+    assert.equal(manifest.files.length, 5 + fixtureFilenames.length);
     for (const file of manifest.files) {
       const bytes = Buffer.from(zipEntries[file.filename]);
       assert.equal(bytes.byteLength, file.bytes);
@@ -2218,7 +2405,7 @@ test("in-transit Stocky purchase orders remain visible as cutover work", async (
     assert.match(finding.message, /In Transit/);
     assert.match(
       finding.recommendedAction,
-      /recreate only its remaining quantities in Shopify/,
+      /download the Open PO import files from Exports/i,
     );
   } finally {
     fakeDb.restore();
