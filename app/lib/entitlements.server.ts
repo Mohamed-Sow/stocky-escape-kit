@@ -198,7 +198,7 @@ export function validateUploadFiles({
 
   if (currentStoredBytes + batchBytes > entitlements.maxStoredBytes) {
     throw new UploadLimitError(
-      `This upload would exceed the ${formatBytes(entitlements.maxStoredBytes)} stored-data allowance for ${entitlements.label}. Download what you need and reset old migration data, or change plans.`,
+      `This upload would exceed the ${formatBytes(entitlements.maxStoredBytes)} stored-data allowance for ${entitlements.label}. Download what you need and delete an older run from Files, or change plans.`,
     );
   }
 

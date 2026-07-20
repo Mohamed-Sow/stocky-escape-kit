@@ -40,9 +40,10 @@ export default function App() {
               Preserve the history Stocky will not move for you.
             </h1>
             <p className={styles.lede}>
-              Keep the original CSV evidence, compare SKU and location gaps
-              against Shopify, and leave with a reviewable action list—not a
-              promise that historical purchase orders can be imported.
+              Keep the original CSV evidence, compare SKU gaps and reported
+              location names against Shopify, and leave with a reviewable action
+              list—not a promise that historical purchase orders can be
+              imported.
             </p>
             <a className={styles.primaryLink} href="https://admin.shopify.com/">
               Open Shopify admin
@@ -90,7 +91,9 @@ export default function App() {
             <h3>Find real reconciliation gaps</h3>
             <p>
               Compare Stocky SKUs with Shopify products, variants, costs,
-              barcodes, vendors, and locations using read-only GraphQL access.
+              barcodes, vendors, and current location names using read-only
+              GraphQL access. The app does not infer per-SKU quantities by
+              location.
             </p>
           </article>
           <article>

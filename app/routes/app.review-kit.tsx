@@ -30,8 +30,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     storedCheckedAt: store.billingCheckedAt,
   });
 
-  if (!billingAccess.active) {
-    throw new Response("An active subscription is required.", { status: 402 });
+  if (!billingAccess.entitlements.reviewKit) {
+    throw new Response("The migration package is unavailable for this plan.", {
+      status: 403,
+    });
   }
 
   const batchId = new URL(request.url).searchParams.get("batch");

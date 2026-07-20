@@ -5,16 +5,41 @@ import {
   Scripts,
   ScrollRestoration,
   isRouteErrorResponse,
+  useLoaderData,
   useRouteError,
+  type LoaderFunctionArgs,
 } from "react-router";
 import styles from "./styles/public-info.module.css";
 
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+
+  return {
+    // Shopify's preliminary App Bridge check also requests the configured app
+    // URL directly. The embedded /app shell loads this script through the
+    // official AppProvider, while the public root needs its own marker.
+    publicAppBridgeApiKey:
+      url.pathname === "/" ? process.env.SHOPIFY_API_KEY || "" : "",
+  };
+}
+
 export default function App() {
+  const { publicAppBridgeApiKey } = useLoaderData<typeof loader>();
+
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
+        {publicAppBridgeApiKey ? (
+          <>
+            <meta name="shopify-api-key" content={publicAppBridgeApiKey} />
+            <script
+              src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+              data-api-key={publicAppBridgeApiKey}
+            />
+          </>
+        ) : null}
         <link rel="preconnect" href="https://cdn.shopify.com/" />
         <link
           rel="stylesheet"

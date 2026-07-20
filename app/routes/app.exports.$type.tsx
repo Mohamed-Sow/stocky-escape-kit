@@ -37,13 +37,6 @@ async function exportResponse({
     storedCheckedAt: store.billingCheckedAt,
   });
 
-  if (!billingAccess.active) {
-    throw new Response(
-      "An active Stocky Escape Kit subscription is required before generating reports.",
-      { status: 402 },
-    );
-  }
-
   const exportType = params.type;
   const batchId = new URL(request.url).searchParams.get("batch");
 

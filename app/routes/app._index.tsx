@@ -40,8 +40,12 @@ import {
   resolveBillingAccess,
 } from "../lib/entitlements.server";
 import {
+  DELETE_RUN_CONFIRMATION,
+  DeleteRunConfirmationError,
+  MigrationRunNotFoundError,
   RESET_CONFIRMATION,
   ResetConfirmationError,
+  deleteStoreMigrationRun,
   resetStoreMigrationData,
 } from "../lib/reset.server";
 import {
@@ -53,10 +57,7 @@ import {
   resolveStockySourceCoverage,
   stockyReportTypeLabel,
 } from "../lib/source-coverage";
-import {
-  getUploadedFiles,
-  importStockyCsvFiles,
-} from "../lib/uploads.server";
+import { getUploadedFiles, importStockyCsvFiles } from "../lib/uploads.server";
 import {
   BILLING_PLAN_DETAILS,
   getActiveBillingName,
@@ -169,6 +170,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const url = new URL(request.url);
+  const pageNotice =
+    url.searchParams.get("notice") === "run-deleted"
+      ? ({
+          status: "success",
+          message:
+            "The selected migration run and its stored evidence were permanently deleted. Other runs and app settings were preserved.",
+        } as const)
+      : null;
   const requestedBatchId = url.searchParams.get("batch");
   const [batchTotal, latestSyncAttempt, storageAggregate] = await Promise.all([
     db.uploadBatch.count({ where: { storeId: store.id } }),
@@ -350,9 +359,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     exports: EXPORT_TYPES.map((type) => ({
       type,
       ...EXPORT_DETAILS[type],
-      available:
-        billingAccess.active &&
-        canGenerateExport(billingAccess.entitlements, type),
+      available: canGenerateExport(billingAccess.entitlements, type),
     })),
     exportJobs: exportJobs.map((job) => ({
       id: job.id,
@@ -362,6 +369,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       errorMessage: job.errorMessage,
     })),
     resetConfirmation: RESET_CONFIRMATION,
+    deleteRunConfirmation: DELETE_RUN_CONFIRMATION,
+    pageNotice,
   };
 };
 
@@ -432,6 +441,33 @@ export const action = async ({
           error instanceof ResetConfirmationError
             ? error.message
             : "Migration data could not be reset. Try again or contact support.",
+      };
+    }
+  }
+
+  if (intent === "delete_migration_run") {
+    try {
+      await deleteStoreMigrationRun({
+        storeId: store.id,
+        batchId: String(formData.get("batchId") ?? ""),
+        confirmation: String(formData.get("confirmation") ?? ""),
+      });
+      return redirect("/app/files?notice=run-deleted", { target: "_self" });
+    } catch (error) {
+      if (
+        !(error instanceof DeleteRunConfirmationError) &&
+        !(error instanceof MigrationRunNotFoundError)
+      ) {
+        console.error("Migration run deletion failed.", error);
+      }
+
+      return {
+        status: "error",
+        message:
+          error instanceof DeleteRunConfirmationError ||
+          error instanceof MigrationRunNotFoundError
+            ? error.message
+            : "The migration run could not be deleted. Try again or contact support.",
       };
     }
   }
@@ -577,6 +613,7 @@ export default function Index() {
         {!data.billing.active || data.billing.usingLastVerifiedStatus ? (
           <BillingBanner data={data} />
         ) : null}
+        {data.pageNotice ? <StatusBanner data={data.pageNotice} /> : null}
         {actionData ? <StatusBanner data={actionData} /> : null}
 
         <main className={styles.main}>
@@ -594,9 +631,7 @@ export default function Index() {
 function Overview({ data, onViewChange }: ViewProps) {
   const batch = data.selectedBatch;
   const sourceCoverage = resolveStockySourceCoverage(batch?.files ?? []);
-  const missingSourceLabels = sourceCoverage.missing.map(
-    stockyReportTypeLabel,
-  );
+  const missingSourceLabels = sourceCoverage.missing.map(stockyReportTypeLabel);
   const totalFindings = Object.values(data.severityCounts).reduce(
     (sum, count) => sum + count,
     0,
@@ -867,8 +902,8 @@ function Files({ data, selectedBatchId }: ViewProps) {
             reports and inventory activity
           </li>
           <li>
-            Supplier evidence from purchase orders or custom SKU reports;
-            Stocky supplier records cannot be exported directly
+            Supplier evidence from purchase orders or custom SKU reports; Stocky
+            supplier records cannot be exported directly
           </li>
         </ul>
         <p>
@@ -887,14 +922,19 @@ function Files({ data, selectedBatchId }: ViewProps) {
           catalogs stop before findings are generated so partial results cannot
           look complete; contact support before relying on this app for one.
         </p>
+        <p className={styles.inlineNotice}>
+          The location check compares location names found in Stocky reports
+          with the store&apos;s current Shopify location names. It does not
+          claim that a specific SKU is stocked at that location or compare
+          on-hand quantities.
+        </p>
         {sourceCoverageDescription ? (
           <p
             aria-label={`Selected run coverage: ${sourceCoverageDescription}`}
             className={styles.inlineNotice}
             role="note"
           >
-            <strong>Selected run coverage:</strong>{" "}
-            {sourceCoverageDescription}
+            <strong>Selected run coverage:</strong> {sourceCoverageDescription}
           </p>
         ) : null}
       </section>
@@ -916,10 +956,16 @@ function Files({ data, selectedBatchId }: ViewProps) {
             <h3>Preserved source files</h3>
           </div>
           {data.selectedBatch ? (
-            <CatalogSync
-              batchId={data.selectedBatch.id}
-              disabled={!data.billing.active}
-            />
+            <div className={styles.runActions}>
+              <CatalogSync
+                batchId={data.selectedBatch.id}
+                disabled={!data.billing.active}
+              />
+              <DeleteRunControl
+                batchId={data.selectedBatch.id}
+                confirmationText={data.deleteRunConfirmation}
+              />
+            </div>
           ) : null}
         </div>
         {data.selectedBatch ? (
@@ -1049,7 +1095,7 @@ function FileStager({ data }: { data: LoaderData }) {
       data.storage.maxBytes
     ) {
       nextLimitMessage =
-        "This run would exceed stored-data capacity. Download and reset an older run, or change plans.";
+        "This run would exceed stored-data capacity. Download what you need and delete an older run from Files, or change plans.";
     }
 
     if (!nextLimitMessage) {
@@ -1193,6 +1239,68 @@ function CatalogSync({
       >
         {isSyncing ? "Syncing…" : "Sync Shopify and audit"}
       </button>
+    </Form>
+  );
+}
+
+function DeleteRunControl({
+  batchId,
+  confirmationText,
+}: {
+  batchId: string;
+  confirmationText: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        className={styles.textButton}
+        onClick={() => setArmed(true)}
+      >
+        Delete selected run
+      </button>
+    );
+  }
+
+  return (
+    <Form method="post" className={styles.deleteRunForm}>
+      <input type="hidden" name="intent" value="delete_migration_run" />
+      <input type="hidden" name="batchId" value={batchId} />
+      <p>
+        Deletes only this run&apos;s files, parsed rows, findings, catalog
+        snapshot, and export history. Other runs and app settings stay.
+      </p>
+      <label>
+        Type <strong>{confirmationText}</strong>
+        <input
+          name="confirmation"
+          value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)}
+          autoComplete="off"
+        />
+      </label>
+      <div className={styles.actionRow}>
+        <button
+          type="submit"
+          className={styles.dangerButton}
+          disabled={confirmation !== confirmationText}
+        >
+          Permanently delete this run
+        </button>
+        <button
+          type="button"
+          className={styles.textButton}
+          onClick={() => {
+            setArmed(false);
+            setConfirmation("");
+          }}
+        >
+          Cancel
+        </button>
+      </div>
     </Form>
   );
 }
@@ -1426,7 +1534,7 @@ function Findings({ data, selectedBatchId }: ViewProps) {
 }
 
 function Exports({ data, selectedBatchId }: ViewProps) {
-  const migrationPackageAvailable = data.billing.active;
+  const migrationPackageAvailable = data.entitlements.reviewKit;
 
   return (
     <div className={styles.stack}>
@@ -1447,7 +1555,7 @@ function Exports({ data, selectedBatchId }: ViewProps) {
               primary
             />
           ) : selectedBatchId ? (
-            <span className={styles.lockedLabel}>Reactivate plan</span>
+            <span className={styles.lockedLabel}>Unavailable</span>
           ) : null}
         </div>
         {!selectedBatchId ? (
@@ -1470,7 +1578,7 @@ function Exports({ data, selectedBatchId }: ViewProps) {
                 path={`/app/exports/${item.type}?batch=${encodeURIComponent(selectedBatchId)}`}
               />
             ) : selectedBatchId ? (
-              <span className={styles.lockedLabel}>Reactivate plan</span>
+              <span className={styles.lockedLabel}>Unavailable</span>
             ) : (
               <button disabled>Choose a run</button>
             )}
@@ -1546,7 +1654,7 @@ function Settings({ data }: { data: LoaderData }) {
           .
           {data.billing.active
             ? " Plan changes are completed securely through Shopify App Pricing."
-            : " New uploads, catalog syncs, and generated reports are paused. Your existing source files and findings remain available so you can download or delete them."}
+            : " New uploads and catalog syncs are paused. Your existing source files, findings, and migration reports remain available so you can download or delete them."}
         </p>
         <Form method="post">
           <input type="hidden" name="intent" value="select_plan" />
@@ -1583,8 +1691,8 @@ function Settings({ data }: { data: LoaderData }) {
             </dd>
           </div>
           <div>
-            <dt>Location mismatch audit</dt>
-            <dd>Included</dd>
+            <dt>Stocky location-name check</dt>
+            <dd>Included; names only, not per-SKU quantities</dd>
           </div>
           <div>
             <dt>All reports and migration package</dt>
@@ -1614,9 +1722,10 @@ function Settings({ data }: { data: LoaderData }) {
         <h3>What Stocky Escape Kit keeps</h3>
         <p>
           Raw CSV bytes, file checksums, parsed rows, catalog snapshots,
-          findings, and export history stay with this store until you reset
-          them. A canceled subscription stays read-only so you can retrieve or
-          delete this evidence. Uninstalling the app triggers deletion of the
+          findings, and export history stay with this store until you delete a
+          run or reset all migration data. A canceled subscription blocks new
+          uploads and catalog syncs but still lets you retrieve reports or
+          delete stored evidence. Uninstalling the app triggers deletion of the
           store record and its migration data when Shopify delivers the
           uninstall webhook.
         </p>
@@ -1809,7 +1918,7 @@ function BillingBanner({ data }: { data: LoaderData }) {
         <p>
           {data.billing.active
             ? "Existing paid access is using the last verified active status for a bounded 24-hour grace period while the Partner API is unavailable."
-            : "You can review findings, download original CSV files, or permanently reset the data. Reactivate to upload, sync, or generate reports."}
+            : "You can review findings, download original CSV files and migration reports, delete one run, or permanently reset all data. Reactivate to upload or sync again."}
         </p>
       </div>
       {planLink}

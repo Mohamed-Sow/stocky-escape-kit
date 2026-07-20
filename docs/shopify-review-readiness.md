@@ -44,6 +44,33 @@ Do not submit until every item is checked in the Partner Dashboard and the live 
 9. Download parsed archive, complete audit findings, supplier evidence, and migration checklist exports.
 10. Download the migration-package ZIP and verify it contains all ten original CSV files under `source/`, the four generated reports, and `manifest.json` with byte counts and SHA-256 checksums.
 
+## Embedded preliminary checks
+
+Shopify evaluates these checks from both the configured App URL and recent
+embedded-app usage. Before treating a pending check as a Shopify-side defect:
+
+1. Confirm the raw HTML at `https://stocky-escape-kit.onrender.com` contains
+   `https://cdn.shopify.com/shopifycloud/app-bridge.js` and a
+   `shopify-api-key` marker. The embedded `/app` routes must continue to load
+   App Bridge through Shopify's official React Router `AppProvider` so the
+   script is not duplicated there.
+2. Open the production app from the review/dev store, then navigate through
+   Overview, Files, Findings, Exports, and Settings. A successful protected
+   route proves `authenticate.admin(request)` accepted Shopify's embedded
+   session-token flow; the live smoke separately proves the persisted offline
+   token, granted scopes, Admin GraphQL access, and App Pricing subscription.
+3. Check browser or network filtering before escalating. In particular,
+   `monorail-edge.shopifysvc.com` must resolve and accept HTTPS traffic. Disable
+   a VPN, tracker-blocking DNS profile, or blocking browser extension for the
+   test, or repeat the interaction on a clean cellular hotspot.
+4. Wait for at least two of Shopify's two-hour check cycles after the clean
+   interaction, then reload the App Store review page. Do not submit while
+   either embedded check is still pending.
+
+References: [Shopify session tokens](https://shopify.dev/docs/apps/build/authentication-authorization/session-tokens),
+[App Store requirements](https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements),
+and [Shopify's preliminary-check announcement](https://shopify.dev/changelog/session-tokens-and-app-listings-automatically-checked-before-submitting-for-app-review).
+
 ## Claims boundary
 
 Allowed claims: Stocky CSV backup, raw archive, migration audit, supplier hints, and Shopify-ready cleanup exports.

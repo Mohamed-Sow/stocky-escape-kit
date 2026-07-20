@@ -47,6 +47,7 @@ function runStaticChecks() {
     process.cwd(),
     "app/routes/_index/route.tsx",
   );
+  const rootDocumentPath = path.join(process.cwd(), "app/root.tsx");
   const authLoginRoutePath = path.join(
     process.cwd(),
     "app/routes/auth.login/route.tsx",
@@ -260,6 +261,23 @@ function runStaticChecks() {
     ) {
       failures.push(
         "The embedded app shell must use Shopify's authenticated React Router boundary and App Bridge provider for session tokens.",
+      );
+    }
+  }
+
+  if (!existsSync(rootDocumentPath)) {
+    failures.push("app/root.tsx is missing.");
+  } else {
+    const rootDocument = readFileSync(rootDocumentPath, "utf8");
+    if (
+      !rootDocument.includes('name="shopify-api-key"') ||
+      !rootDocument.includes(
+        'src="https://cdn.shopify.com/shopifycloud/app-bridge.js"',
+      ) ||
+      !rootDocument.includes('url.pathname === "/"')
+    ) {
+      failures.push(
+        "The configured public app URL must expose Shopify's CDN App Bridge marker without duplicating it inside embedded routes.",
       );
     }
   }

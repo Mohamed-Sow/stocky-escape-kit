@@ -20,13 +20,15 @@ Use Stocky Escape Kit to:
 
 - Preserve original Stocky CSV files and raw download history.
 - Review parsing warnings without losing malformed source files.
-- Compare Stocky SKUs and locations with the current Shopify catalog.
-- Find missing or duplicate SKUs, cost, barcode, vendor, and location gaps.
+- Compare Stocky SKUs and reported location names with the current Shopify catalog.
+- Find missing or duplicate SKUs, missing cost, barcode, or vendor data, and Stocky location names that do not exist in Shopify.
 - Retain supplier hints and open-purchase-order evidence for manual review.
 - Follow an operational cutover checklist for in-flight orders, replacement Shopify workflows, staff training, POS cleanup, and Stocky-dependent integrations.
 - Download four focused CSV reports or one checksum-manifest migration record containing every preserved original CSV.
 
 Stocky Escape Kit uses read-only access to products, inventory, and locations. It does not change Shopify data, replace inventory management, or import historical Stocky purchase orders into Shopify. Historical purchase orders are preserved and reviewed as migration evidence.
+
+The location check verifies whether a location name found in a Stocky report exists among the store's current Shopify locations. It does not claim that a specific SKU is stocked there or compare per-location quantities.
 
 Current catalog audits support stores with up to 5,000 Shopify variants. Larger catalogs stop before findings are generated, so the app never presents a partial catalog audit as complete.
 

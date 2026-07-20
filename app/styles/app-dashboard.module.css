@@ -168,6 +168,42 @@ a:focus-visible {
   color: #005bd3;
   font-weight: 650;
 }
+.runActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.deleteRunForm {
+  background: #fff8f7;
+  border: 1px solid #f0b6b2;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+  padding: 12px;
+}
+.deleteRunForm p {
+  color: #6b2b25;
+  font-size: 13px;
+}
+.deleteRunForm label {
+  color: #616161;
+  display: grid;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 5px;
+}
+.deleteRunForm input {
+  background: #fff;
+  border: 1px solid #8a8a8a;
+  border-radius: 8px;
+  color: #202223;
+  font: inherit;
+  min-height: 38px;
+  padding: 8px 10px;
+}
 .definitionList {
   display: grid;
   margin: 0;

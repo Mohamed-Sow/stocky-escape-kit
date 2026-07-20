@@ -48,7 +48,9 @@ import {
   validateUploadFiles,
 } from "../app/lib/entitlements.server";
 import {
+  DELETE_RUN_CONFIRMATION,
   RESET_CONFIRMATION,
+  deleteStoreMigrationRun,
   resetStoreMigrationData,
 } from "../app/lib/reset.server";
 import {
@@ -174,11 +176,10 @@ test("source coverage requires every core successfully parsed Stocky report", ()
     { reportType: "VENDORS", status: "PARSED" },
   ]);
   const complete = resolveStockySourceCoverage(
-    [
-      "PURCHASE_ORDERS",
-      "STOCKTAKES",
-      "HISTORICAL_COSTS",
-    ].map((reportType) => ({ reportType, status: "PARSED" })),
+    ["PURCHASE_ORDERS", "STOCKTAKES", "HISTORICAL_COSTS"].map((reportType) => ({
+      reportType,
+      status: "PARSED",
+    })),
   );
 
   assert.equal(partial.coreTypesRepresented, false);
@@ -400,8 +401,7 @@ test("Stocky parser recognizes current documented Stocky report shapes", () => {
   });
   const currentStock = parseStockyCsv({
     filename: "current-stock-on-hand.csv",
-    content:
-      "SKU,Product Name,Cost Price,Stock on Hand\nSKU-1,Widget,8.00,9",
+    content: "SKU,Product Name,Cost Price,Stock on Hand\nSKU-1,Widget,8.00,9",
   });
   const currentProductCosts = parseStockyCsv({
     filename: "product-costs.csv",
@@ -1184,6 +1184,94 @@ test("store reset requires exact confirmation and deletes only store-scoped migr
     { model: "shopifyCatalogSnapshot", where: { storeId: "store-1" } },
     { model: "uploadBatch", where: { storeId: "store-1" } },
   ]);
+});
+
+test("one migration run can be deleted without removing other store data", async () => {
+  const calls: Array<{ operation: string; where: unknown }> = [];
+  const transaction = {
+    uploadBatch: {
+      findFirst: async ({ where }: { where: unknown }) => {
+        calls.push({ operation: "find-run", where });
+        return {
+          id: "batch-1",
+          auditSnapshotId: "snapshot-1",
+          fileCount: 10,
+          importedRowCount: 247,
+        };
+      },
+      delete: async ({ where }: { where: unknown }) => {
+        calls.push({ operation: "delete-run", where });
+        return { id: "batch-1" };
+      },
+      count: async ({ where }: { where: unknown }) => {
+        calls.push({ operation: "count-snapshot-links", where });
+        return 0;
+      },
+    },
+    shopifyCatalogSnapshot: {
+      deleteMany: async ({ where }: { where: unknown }) => {
+        calls.push({ operation: "delete-orphan-snapshot", where });
+        return { count: 1 };
+      },
+    },
+  };
+  const database = {
+    $transaction: async (callback: (client: typeof transaction) => unknown) =>
+      callback(transaction),
+  } as never;
+
+  await assert.rejects(
+    deleteStoreMigrationRun({
+      storeId: "store-1",
+      batchId: "batch-1",
+      confirmation: "DELETE",
+      database,
+    }),
+    /DELETE THIS RUN/,
+  );
+  const result = await deleteStoreMigrationRun({
+    storeId: "store-1",
+    batchId: "batch-1",
+    confirmation: DELETE_RUN_CONFIRMATION,
+    database,
+  });
+
+  assert.deepEqual(result, {
+    uploadBatch: 1,
+    files: 10,
+    parsedRows: 247,
+    catalogSnapshots: 1,
+  });
+  assert.deepEqual(calls, [
+    {
+      operation: "find-run",
+      where: { id: "batch-1", storeId: "store-1" },
+    },
+    { operation: "delete-run", where: { id: "batch-1" } },
+    {
+      operation: "count-snapshot-links",
+      where: { auditSnapshotId: "snapshot-1" },
+    },
+    {
+      operation: "delete-orphan-snapshot",
+      where: { id: "snapshot-1", storeId: "store-1" },
+    },
+  ]);
+});
+
+test("existing migration reports stay downloadable after billing ends", () => {
+  const exportRoute = readFileSync(
+    path.join(process.cwd(), "app", "routes", "app.exports.$type.tsx"),
+    "utf8",
+  );
+  const reviewKitRoute = readFileSync(
+    path.join(process.cwd(), "app", "routes", "app.review-kit.tsx"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(exportRoute, /if \(!billingAccess\.active\)/);
+  assert.doesNotMatch(reviewKitRoute, /if \(!billingAccess\.active\)/);
+  assert.match(reviewKitRoute, /billingAccess\.entitlements\.reviewKit/);
 });
 
 test("Prisma billing enum still contains app statuses used by store updates", () => {
