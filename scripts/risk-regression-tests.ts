@@ -184,6 +184,10 @@ test("merchant-facing workflow labels stay truthful and task-oriented", () => {
   assert.match(dashboardRoute, /role="note"/);
   assert.match(dashboardRoute, /aria-label={`Selected run coverage:/);
   assert.match(dashboardRoute, /Combined file size per run/);
+  assert.match(dashboardRoute, /view === "settings" \? null :/);
+  assert.match(dashboardRoute, /cta: "Review critical findings"/);
+  assert.match(dashboardRoute, /findingSeverity: "CRITICAL"/);
+  assert.doesNotMatch(dashboardRoute, />\s*Continue\s*</);
   assert.match(
     dashboardRoute,
     /formatBytes\(data\.entitlements\.maxFileBytes\)} per file/,

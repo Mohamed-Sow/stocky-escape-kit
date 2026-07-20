@@ -588,13 +588,15 @@ export default function Index() {
               migration record.
             </p>
           </div>
-          <RunPicker
-            batches={data.batches}
-            selectedBatch={data.selectedBatch}
-            selectedBatchId={selectedBatchId}
-            runsPage={data.runHistory.page}
-            view={view}
-          />
+          {view === "settings" ? null : (
+            <RunPicker
+              batches={data.batches}
+              selectedBatch={data.selectedBatch}
+              selectedBatchId={selectedBatchId}
+              runsPage={data.runHistory.page}
+              view={view}
+            />
+          )}
         </header>
 
         <nav className={styles.tabs} aria-label="Migration workspace">
@@ -628,7 +630,7 @@ export default function Index() {
   );
 }
 
-function Overview({ data, onViewChange }: ViewProps) {
+function Overview({ data, selectedBatchId, onViewChange }: ViewProps) {
   const batch = data.selectedBatch;
   const sourceCoverage = resolveStockySourceCoverage(batch?.files ?? []);
   const missingSourceLabels = sourceCoverage.missing.map(stockyReportTypeLabel);
@@ -643,6 +645,7 @@ function Overview({ data, onViewChange }: ViewProps) {
         detail:
           "Original CSV files and findings remain readable. Use Settings if you want to delete the stored migration data.",
         view: "files" as const,
+        cta: "View preserved files",
       }
     : !batch
       ? {
@@ -651,6 +654,7 @@ function Overview({ data, onViewChange }: ViewProps) {
           detail:
             "Stage all related files and submit them as one migration run.",
           view: "files" as const,
+          cta: "Upload Stocky files",
         }
       : !sourceCoverage.coreTypesRepresented
         ? {
@@ -658,6 +662,7 @@ function Overview({ data, onViewChange }: ViewProps) {
             title: "Add the missing historical reports",
             detail: `Create one complete run that also includes ${missingSourceLabels.join(", ")}. Product, custom SKU, and inventory activity reports are supplemental evidence.`,
             view: "files" as const,
+            cta: "Review missing reports",
           }
         : !data.latestSnapshot || data.latestSnapshot.status !== "SUCCEEDED"
           ? {
@@ -666,6 +671,7 @@ function Overview({ data, onViewChange }: ViewProps) {
               detail:
                 "Build a complete, read-only product and location snapshot before matching this run.",
               view: "files" as const,
+              cta: "Sync Shopify catalog",
             }
           : data.severityCounts.CRITICAL > 0
             ? {
@@ -674,6 +680,7 @@ function Overview({ data, onViewChange }: ViewProps) {
                 detail:
                   "Resolve identity and matching gaps before relying on the export kit.",
                 view: "findings" as const,
+                cta: "Review critical findings",
               }
             : totalFindings > 0
               ? {
@@ -682,6 +689,7 @@ function Overview({ data, onViewChange }: ViewProps) {
                   detail:
                     "No critical blockers remain. Confirm the non-blocking issues before handoff.",
                   view: "findings" as const,
+                  cta: "Review findings",
                 }
               : {
                   eyebrow: "Run ready",
@@ -689,7 +697,16 @@ function Overview({ data, onViewChange }: ViewProps) {
                   detail:
                     "The current audit has no findings. Preserve the reports and source checksums for handoff.",
                   view: "exports" as const,
+                  cta: "Download migration package",
                 };
+  const nextActionHref = viewHref(
+    nextAction.view,
+    selectedBatchId,
+    data.runHistory.page,
+    nextAction.view === "findings" && data.severityCounts.CRITICAL > 0
+      ? { findingSeverity: "CRITICAL" }
+      : undefined,
+  );
 
   return (
     <div className={styles.stack}>
@@ -699,13 +716,12 @@ function Overview({ data, onViewChange }: ViewProps) {
           <h3>{nextAction.title}</h3>
           <p>{nextAction.detail}</p>
         </div>
-        <button
-          type="button"
+        <Link
+          to={nextActionHref}
           className={styles.primaryButton}
-          onClick={() => onViewChange(nextAction.view)}
         >
-          Continue
-        </button>
+          {nextAction.cta}
+        </Link>
       </section>
       <section className={styles.metricGrid} aria-label="Migration progress">
         <Metric
@@ -2096,10 +2112,18 @@ type ViewProps = {
   onViewChange: (view: View) => void;
 };
 
-function viewHref(view: View, batchId: string | null, runsPage = 1) {
+function viewHref(
+  view: View,
+  batchId: string | null,
+  runsPage = 1,
+  extraParams?: Record<string, string>,
+) {
   const params = new URLSearchParams();
   if (batchId) params.set("batch", batchId);
   if (runsPage > 1) params.set("runsPage", String(runsPage));
+  for (const [key, value] of Object.entries(extraParams ?? {})) {
+    params.set(key, value);
+  }
   const query = params.size ? `?${params}` : "";
   return `/app/${view}${query}`;
 }
