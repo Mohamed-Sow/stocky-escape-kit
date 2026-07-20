@@ -138,7 +138,7 @@ export const BILLING_PLAN_DETAILS = [
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.basic,
     price: "$99/mo",
     summary:
-      "All migration reports and the migration package; up to 10 files, 10 MB, and 40,000 parsed rows per run.",
+      "All migration reports and the migration package; up to 10 files, 5 MB per file, 10 MB combined, and 40,000 parsed rows per run.",
   },
   {
     id: "pro",
@@ -146,7 +146,7 @@ export const BILLING_PLAN_DETAILS = [
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.pro,
     price: "$199/mo",
     summary:
-      "The same complete workflow with up to 20 files, 15 MB, and 60,000 parsed rows per run.",
+      "The same complete workflow with up to 20 files, 8 MB per file, 15 MB combined, and 60,000 parsed rows per run.",
   },
   {
     id: "plus",
@@ -154,7 +154,7 @@ export const BILLING_PLAN_DETAILS = [
     invoiceName: PUBLIC_BILLING_PLAN_INVOICE_NAMES.plus,
     price: "$299/mo",
     summary:
-      "The same complete workflow with up to 30 files, 20 MB, and 75,000 parsed rows per run.",
+      "The same complete workflow with up to 30 files, 10 MB per file, 20 MB combined, and 75,000 parsed rows per run.",
   },
 ] as const;
 

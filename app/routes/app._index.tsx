@@ -891,6 +891,54 @@ function Files({ data, selectedBatchId }: ViewProps) {
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>Selected run</p>
+            <h3>Preserved source files</h3>
+          </div>
+          {data.selectedBatch ? (
+            <div className={styles.runActions}>
+              <CatalogSync
+                batchId={data.selectedBatch.id}
+                disabled={!data.billing.active}
+              />
+              <DeleteRunControl
+                batchId={data.selectedBatch.id}
+                confirmationText={data.deleteRunConfirmation}
+              />
+            </div>
+          ) : null}
+        </div>
+        {sourceCoverageDescription ? (
+          <p
+            aria-label={`Selected run coverage: ${sourceCoverageDescription}`}
+            className={styles.inlineNotice}
+            role="note"
+          >
+            <strong>Selected run coverage:</strong> {sourceCoverageDescription}
+          </p>
+        ) : null}
+        {data.selectedBatch ? (
+          <FilesTable files={data.selectedBatch.files} />
+        ) : (
+          <EmptyState
+            title="No run selected"
+            detail="Stage related Stocky CSV exports below and upload them together."
+          />
+        )}
+      </section>
+      {data.latestSyncAttempt?.status === "FAILED" ? (
+        <div className={styles.errorNotice} role="alert">
+          <strong>Latest Shopify sync failed.</strong>{" "}
+          {data.latestSyncAttempt.errorMessage ??
+            "Shopify did not return a complete catalog snapshot."}{" "}
+          {data.latestSnapshot?.status === "SUCCEEDED"
+            ? "The selected run remains linked to its last complete snapshot; retry before relying on a fresh audit."
+            : "Retry before relying on this run's audit."}
+        </div>
+      ) : null}
+      <FileStager key={selectedBatchId ?? "new-run"} data={data} />
+      <section className={styles.panel}>
         <p className={styles.eyebrow}>Before August 31, 2026</p>
         <h3>Preserve the Stocky history that will not migrate automatically</h3>
         <ul className={styles.guidanceList}>
@@ -928,54 +976,6 @@ function Files({ data, selectedBatchId }: ViewProps) {
           claim that a specific SKU is stocked at that location or compare
           on-hand quantities.
         </p>
-        {sourceCoverageDescription ? (
-          <p
-            aria-label={`Selected run coverage: ${sourceCoverageDescription}`}
-            className={styles.inlineNotice}
-            role="note"
-          >
-            <strong>Selected run coverage:</strong> {sourceCoverageDescription}
-          </p>
-        ) : null}
-      </section>
-      {data.latestSyncAttempt?.status === "FAILED" ? (
-        <div className={styles.errorNotice} role="alert">
-          <strong>Latest Shopify sync failed.</strong>{" "}
-          {data.latestSyncAttempt.errorMessage ??
-            "Shopify did not return a complete catalog snapshot."}{" "}
-          {data.latestSnapshot?.status === "SUCCEEDED"
-            ? "The selected run remains linked to its last complete snapshot; retry before relying on a fresh audit."
-            : "Retry before relying on this run's audit."}
-        </div>
-      ) : null}
-      <FileStager key={selectedBatchId ?? "new-run"} data={data} />
-      <section className={styles.panel}>
-        <div className={styles.sectionHeading}>
-          <div>
-            <p className={styles.eyebrow}>Selected run</p>
-            <h3>Preserved source files</h3>
-          </div>
-          {data.selectedBatch ? (
-            <div className={styles.runActions}>
-              <CatalogSync
-                batchId={data.selectedBatch.id}
-                disabled={!data.billing.active}
-              />
-              <DeleteRunControl
-                batchId={data.selectedBatch.id}
-                confirmationText={data.deleteRunConfirmation}
-              />
-            </div>
-          ) : null}
-        </div>
-        {data.selectedBatch ? (
-          <FilesTable files={data.selectedBatch.files} />
-        ) : (
-          <EmptyState
-            title="No run selected"
-            detail="Stage related Stocky CSV exports above and upload them together."
-          />
-        )}
       </section>
       <section className={styles.panel}>
         <div className={styles.sectionHeading}>
@@ -1203,6 +1203,7 @@ function FileStager({ data }: { data: LoaderData }) {
         </button>
         <span className={styles.muted}>
           {files.length}/{data.entitlements.maxFilesPerBatch} files ·{" "}
+          {formatBytes(data.entitlements.maxFileBytes)} per file ·{" "}
           {formatBytes(stagedBytes)}/
           {formatBytes(data.entitlements.maxBatchBytes)} this run ·{" "}
           {data.entitlements.maxRowsPerBatch.toLocaleString()} parsed rows max ·{" "}
@@ -1674,6 +1675,10 @@ function Settings({ data }: { data: LoaderData }) {
           <div>
             <dt>Largest file</dt>
             <dd>{formatBytes(data.entitlements.maxFileBytes)}</dd>
+          </div>
+          <div>
+            <dt>Combined file size per run</dt>
+            <dd>{formatBytes(data.entitlements.maxBatchBytes)}</dd>
           </div>
           <div>
             <dt>Rows per file</dt>

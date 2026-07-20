@@ -60,6 +60,7 @@ import {
 import { runHostedSmokeProof } from "../app/lib/shopify-smoke.server";
 import { getSupportEmail } from "../app/lib/support.server";
 import {
+  BILLING_PLAN_DETAILS,
   BILLING_PLAN_NAMES,
   PRIVATE_TEST_BILLING_DISPLAY_NAME,
   PRIVATE_TEST_BILLING_PLAN,
@@ -164,6 +165,21 @@ test("merchant-facing workflow labels stay truthful and task-oriented", () => {
   assert.match(dashboardRoute, /Before August 31, 2026/);
   assert.match(dashboardRoute, /role="note"/);
   assert.match(dashboardRoute, /aria-label={`Selected run coverage:/);
+  assert.match(dashboardRoute, /Combined file size per run/);
+  assert.match(
+    dashboardRoute,
+    /formatBytes\(data\.entitlements\.maxFileBytes\)} per file/,
+  );
+  assert.ok(
+    dashboardRoute.indexOf("Selected run") <
+      dashboardRoute.indexOf("<FileStager"),
+    "selected run files should appear before the new-run uploader",
+  );
+  assert.ok(
+    dashboardRoute.indexOf("<FileStager") <
+      dashboardRoute.indexOf("Before August 31, 2026"),
+    "the operational file workflow should appear before background guidance",
+  );
   assert.doesNotMatch(dashboardRoute, /rows imported/);
   assert.doesNotMatch(auditGenerator, /app reviewer/i);
   assert.doesNotMatch(auditGenerator, /before importing/i);
@@ -756,6 +772,29 @@ test("billing helpers validate configured App Pricing subscription names", () =>
     } else {
       process.env.SHOPIFY_APP_HANDLE = originalAppHandle;
     }
+  }
+});
+
+test("merchant plan summaries state both per-file and combined run limits", () => {
+  const mib = 1024 * 1024;
+
+  for (const plan of BILLING_PLAN_DETAILS) {
+    const entitlements = getPlanEntitlements(plan.id);
+
+    assert.match(
+      plan.summary,
+      new RegExp(`${entitlements.maxFileBytes / mib} MB per file`),
+    );
+    assert.match(
+      plan.summary,
+      new RegExp(`${entitlements.maxBatchBytes / mib} MB combined`),
+    );
+    assert.match(
+      plan.summary,
+      new RegExp(
+        `${entitlements.maxRowsPerBatch.toLocaleString()} parsed rows per run`,
+      ),
+    );
   }
 });
 

@@ -101,9 +101,9 @@ See `docs/render-deployment.md` before creating or updating Render services.
 
 ## Public Pricing
 
-- `Stocky Escape Kit Basic`: `$99/mo`, up to 10 files, 10 MB, and 40,000 parsed rows per run; 100 MB stored source data.
-- `Stocky Escape Kit Pro`: `$199/mo`, up to 20 files, 15 MB, and 60,000 parsed rows per run; 250 MB stored source data.
-- `Stocky Escape Kit Plus`: `$299/mo`, up to 30 files, 20 MB, and 75,000 parsed rows per run; 500 MB stored source data.
+- `Stocky Escape Kit Basic`: `$99/mo`, up to 10 files, 5 MB per file, 10 MB combined, and 40,000 parsed rows per run; 100 MB stored source data.
+- `Stocky Escape Kit Pro`: `$199/mo`, up to 20 files, 8 MB per file, 15 MB combined, and 60,000 parsed rows per run; 250 MB stored source data.
+- `Stocky Escape Kit Plus`: `$299/mo`, up to 30 files, 10 MB per file, 20 MB combined, and 75,000 parsed rows per run; 500 MB stored source data.
 
 All three plans include all four CSV reports, location mismatch analysis, the prioritized checklist, and the complete migration package. Request and row ceilings are intentionally bounded for the current 512 MB Render Starter web service. A synthetic 35 MB / 100,000-row parse exceeded 1 GB RSS, so those former ceilings are not safe on the paid production instance. Retained-source limits also account for base64 raw files, parsed JSON, indexes, and catalog snapshots sharing a 15 GB Postgres disk. A larger source report must be narrowed at export time when Stocky offers a suitable filter; otherwise the app needs a streaming worker and compute/storage upgrade before it can support that file truthfully.
 
